@@ -10,71 +10,53 @@ env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: -D warnings
 
+permissions:
+  contents: read
+  checks: write
+
 jobs:
   test:
-    name: Test Suite
+    name: Test Suite (${{ matrix.os }} - ${{ matrix.rust }})
     runs-on: ${{ matrix.os }}
     strategy:
+      fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
-        rust: [stable, 1.83.0]
+        rust: [stable, '1.83.0']
+        include:
+          - rust: stable
+            profile: default
+          - rust: '1.83.0'
+            profile: minimal
+
     steps:
     - uses: actions/checkout@v4
 
-    # Rust setup
-    - uses: actions-rs/toolchain@v1
+    - uses: dtolnay/rust-toolchain@master
       with:
-        profile: minimal
         toolchain: ${{ matrix.rust }}
-        override: true
         components: rustfmt, clippy
 
-    # Cache dependencies
-    - uses: actions/cache@v3
-      with:
-        path: |
-          ~/.cargo/registry
-          ~/.cargo/git
-          target
-        key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+    - uses: Swatinem/rust-cache@v2
 
-    # Workspace operations
-    - name: Check formatting
-      run: cargo fmt --all -- --check
+    # Format check
+    - run: cargo fmt --all -- --check
 
-    - name: Lint with Clippy
-      uses: actions-rs/clippy-check@v1
-      with:
-        token: ${{ secrets.GITHUB_TOKEN }}
-        args: --all-targets --all-features -- -D warnings
+    - run: cargo clippy --all-targets --all-features -- -D warnings
 
-    # Core testing
-    - name: Run tests (google-ai-rs)
+    # Testing
+    - name: Test main crate
       run: cargo test -p google-ai-rs --all-features
 
-    - name: Run tests (schema-derive)
+    - name: Test derive crate
       run: cargo test -p schema-derive --all-features
 
-  # Additional quality checks
-  checks:
+  quality:
     name: Quality Checks
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v4
-    - uses: actions-rs/toolchain@v1
+    - uses: dtolnay/rust-toolchain@master
       with:
-        profile: minimal
         toolchain: stable
-        override: true
-
-    - name: Check documentation
-      run: |
-        cargo doc --no-deps --all-features --workspace
-        ! grep -r "Documentation test" target/doc/
-
-    - name: Check compile on nightly
-      uses: actions-rs/toolchain@v1
-      with:
-        toolchain: nightly
-        override: true
-    - run: cargo check --all-features --workspace
+    - run: cargo doc --no-deps --all-features --workspace
