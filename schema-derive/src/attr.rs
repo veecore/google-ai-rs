@@ -694,9 +694,9 @@ mod case {
         use crate::attr::case::{snake_case, PascalCase};
         #[allow(non_camel_case_types)]
         enum Case {
-            camelCase,
-            snake_case,
-            PascalCase,
+            camel,
+            snake,
+            Pascal,
         }
         #[test]
         fn from_snake() {
@@ -710,35 +710,35 @@ mod case {
                 Test {
                     title: "leading delim",
                     input: "__private",
-                    wants: vec![(Case::camelCase, "private"), (Case::PascalCase, "Private")],
+                    wants: vec![(Case::camel, "private"), (Case::Pascal, "Private")],
                 },
                 Test {
                     title: "normal snake_case",
                     input: "hello_world",
                     wants: vec![
-                        (Case::camelCase, "helloWorld"),
-                        (Case::PascalCase, "HelloWorld"),
+                        (Case::camel, "helloWorld"),
+                        (Case::Pascal, "HelloWorld"),
                     ],
                 },
                 Test {
                     title: "`_` mayhem",
                     input: "__foo__Bar__",
-                    wants: vec![(Case::camelCase, "fooBar"), (Case::PascalCase, "FooBar")],
+                    wants: vec![(Case::camel, "fooBar"), (Case::Pascal, "FooBar")],
                 },
                 Test {
                     title: "alreadyCamel_alreadyCamel",
                     input: "alreadyCamel_alreadyCamel",
                     wants: vec![
-                        (Case::camelCase, "alreadyCamelAlreadyCamel"),
-                        (Case::PascalCase, "AlreadyCamelAlreadyCamel"),
+                        (Case::camel, "alreadyCamelAlreadyCamel"),
+                        (Case::Pascal, "AlreadyCamelAlreadyCamel"),
                     ],
                 },
                 Test {
                     title: "alreadyCamel",
                     input: "alreadyCamel",
                     wants: vec![
-                        (Case::camelCase, "alreadyCamel"),
-                        (Case::PascalCase, "AlreadyCamel"),
+                        (Case::camel, "alreadyCamel"),
+                        (Case::Pascal, "AlreadyCamel"),
                     ],
                 },
             ];
@@ -747,13 +747,13 @@ mod case {
                 println!("{}", test.title);
                 for want in test.wants {
                     match want {
-                        (Case::camelCase, want) => {
+                        (Case::camel, want) => {
                             assert_eq!(snake_case::to_camel_case(test.input), want)
                         }
-                        (Case::snake_case, want) => {
+                        (Case::snake, want) => {
                             assert_eq!(snake_case::to_snake_case(test.input), want)
                         }
-                        (Case::PascalCase, want) => {
+                        (Case::Pascal, want) => {
                             assert_eq!(snake_case::to_pascal_case(test.input), want)
                         }
                     }
@@ -792,34 +792,34 @@ mod case {
                     title: "consecutive capitals",
                     input: "HTTPRequest",
                     wants: vec![
-                        (Case::snake_case, "http_request"),
-                        (Case::camelCase, "httpRequest"),
+                        (Case::snake, "http_request"),
+                        (Case::camel, "httpRequest"),
                     ],
                 },
                 Test {
                     title: "consecutive capitals (1)",
                     input: "MyHTTPRequest",
-                    wants: vec![(Case::snake_case, "my_http_request")],
+                    wants: vec![(Case::snake, "my_http_request")],
                 },
                 Test {
                     title: "consecutive capitals (2)",
                     input: "ABCdef",
-                    wants: vec![(Case::snake_case, "ab_cdef")],
+                    wants: vec![(Case::snake, "ab_cdef")],
                 },
                 Test {
                     title: "consecutive capitals (3)",
                     input: "HTTPRequestAPI",
                     wants: vec![
-                        (Case::snake_case, "http_request_api"),
-                        (Case::camelCase, "httpRequestApi"),
+                        (Case::snake, "http_request_api"),
+                        (Case::camel, "httpRequestApi"),
                     ],
                 },
                 Test {
                     title: "normal PascalCase",
                     input: "HelloWorld",
                     wants: vec![
-                        (Case::snake_case, "hello_world"),
-                        (Case::camelCase, "helloWorld"),
+                        (Case::snake, "hello_world"),
+                        (Case::camel, "helloWorld"),
                     ],
                 },
             ];
@@ -828,13 +828,13 @@ mod case {
                 println!("{}", test.title);
                 for want in test.wants {
                     match want {
-                        (Case::camelCase, want) => {
+                        (Case::camel, want) => {
                             assert_eq!(PascalCase::to_camel_case(test.input), want)
                         }
-                        (Case::snake_case, want) => {
+                        (Case::snake, want) => {
                             assert_eq!(PascalCase::to_snake_case(test.input), want)
                         }
-                        (Case::PascalCase, want) => {
+                        (Case::Pascal, want) => {
                             assert_eq!(PascalCase::to_pascal_case(test.input), want)
                         }
                     }

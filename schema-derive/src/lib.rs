@@ -508,13 +508,11 @@ mod test {
             let fields_attrs = get_fields_attrs(test.input);
             assert_eq!(fields_attrs.len(), test.want.len());
 
-            let mut ith = 0;
-            for field_attrs in fields_attrs {
+            for (ith, field_attrs) in fields_attrs.iter().enumerate() {
                 match parse_field(&field_attrs, false) {
                     Ok(attr) => assert_eq!(&attr, &test.want[ith]),
                     Err(err) => panic!("test failed: {err}"),
                 };
-                ith += 1;
             }
         }
     }
