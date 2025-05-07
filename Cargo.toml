@@ -1,7 +1,7 @@
 [workspace]
 members = [
     "google-ai-rs",
-    "schema-derive"
+    "google-ai-schema-derive"
 ]
 
 resolver = "2"

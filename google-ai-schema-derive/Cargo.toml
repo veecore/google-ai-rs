@@ -1,0 +1,19 @@
+[package]
+name = "google-ai-schema-derive"
+version = "0.1.0"
+edition = "2021"
+authors = ["Victor <victorayo206@example.com>"]
+description = "Type-safe schema generation for Google AI API interactions"
+license = "MIT"
+repository = "https://github.com/veecore/google-ai-rs"
+documentation = "https://docs.rs/google-ai-schema-derive"
+keywords = ["google-ai", "schema", "derive", "codegen"]
+categories = ["api-bindings", "parser-implementations"]
+
+[lib]
+proc-macro = true
+ 
+[dependencies]
+syn = "2.0.100"
+quote = "1.0.40"
+proc-macro2 = "1.0.94"

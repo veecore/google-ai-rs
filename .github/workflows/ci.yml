@@ -49,7 +49,7 @@ jobs:
       run: cargo test -p google-ai-rs --all-features
 
     - name: Test derive crate
-      run: cargo test -p schema-derive --all-features
+      run: cargo test -p google-ai-schema-derive --all-features
 
   quality:
     name: Quality Checks

@@ -2,8 +2,14 @@
 name = "google-ai-rs"
 version = "0.1.0"
 edition = "2021"
-description = "Unofficial Rust client for Google's Generative AI on google's native gRPC endpoint"
 license = "MIT"
+authors = ["Victor <victorayo206@example.com>"]
+description = "Type-safe Rust client for Google's Generative AI APIs"
+repository = "https://github.com/veecore/google-ai-rs"
+documentation = "https://docs.rs/google-ai-rs"
+keywords = ["google-ai", "gemini", "llm", "generative-ai"]
+categories = ["api-bindings", "web-programming"]
+readme = "README.md"
 
 [dependencies]
 thiserror = "2.0.12"
@@ -18,4 +24,4 @@ base64 = "0.22.1"
 rand = "0.8"
 serde = { version = "1.0.219" , features = ["derive"] }
 serde_json = { version = "1.0.140" }
-schema-derive = { path = "../schema-derive"}
+google-ai-schema-derive = { version = "0.1.0", path = "../google-ai-schema-derive"}

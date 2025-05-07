@@ -1,3 +1,14 @@
+//! Schema derivation framework for Google AI APIs
+//!
+//! Provides procedural macros for generating JSON schemas that comply with
+//! Google's Generative AI API specifications. Enables type-safe API interactions
+//! through compile-time schema validation.
+//!
+//! ## Key Features
+//! - **Schema-GSMA Compliance**: Derive schemas matching Gemini API requirements
+//! - **Serde Integration**: Automatic alignment with serialization/deserialization
+//! - **Validation Rules**: Enforce Google-specific schema constraints at compile time
+
 mod attr;
 
 extern crate proc_macro;

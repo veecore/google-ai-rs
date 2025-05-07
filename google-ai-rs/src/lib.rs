@@ -1,3 +1,32 @@
+//! Rust client for Google's Generative AI APIs
+//!
+//! Provides a type-safe, ergonomic interface for interacting with Google's AI services
+//! including Gemini. Features comprehensive API coverage with compile-time schema
+//! validation and async/await support.
+//!
+//! ## Highlights
+//! - **Type-Safe API Interactions**: Generated from official Google discovery documents
+//! - **Multi-modal Support**: Text, images, and structured data in single requests
+//! - **Production-Ready**: Connection pooling, retries, and comprehensive error handling
+//!
+//! ## Quickstart
+//! ```rust,no_run
+//! use google_ai_rs::{Client, GenerativeModel};
+//!
+//! #[tokio::main]
+//! async fn main() -> Result<(), Box<dyn std::error::Error>> {
+//!     let client = Client::new("API_KEY".into()).await?;
+//!     let model = client.generative_model("gemini-pro");
+//!     
+//!     let response = model.generate_content(
+//!         "Explain quantum physics using pirate metaphors"
+//!     ).await?;
+//!     
+//!     println!("{}", response.text());
+//!     Ok(())
+//! }
+//! ```
+
 #![allow(clippy::doc_lazy_continuation)]
 
 pub mod auth;
@@ -26,9 +55,9 @@ pub use proto::Part;
 pub use proto::TaskType;
 pub use proto::Tool;
 
-extern crate schema_derive;
+extern crate google_ai_schema_derive;
 
-pub use schema_derive::*;
+pub use google_ai_schema_derive::*;
 
 /// Formats model names to full resource path format
 ///

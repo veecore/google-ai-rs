@@ -21,7 +21,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "schema-derive"
+name = "google-ai-schema-derive"
 version = "0.1.0"
 dependencies = [
  "proc-macro2",
