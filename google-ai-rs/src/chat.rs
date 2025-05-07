@@ -28,7 +28,7 @@ pub struct Session<'m> {
     pub history: Vec<Content>,
 }
 
-impl<'m> GenerativeModel<'m> {
+impl GenerativeModel<'_> {
     /// Starts a new chat session with empty history
     pub fn start_chat(&self) -> Session<'_> {
         Session {

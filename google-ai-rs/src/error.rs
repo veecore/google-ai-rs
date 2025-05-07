@@ -78,6 +78,7 @@ pub struct SetupError {
     pub err: Box<dyn StdError + Send + Sync>,
 }
 
+#[allow(clippy::new_ret_no_self)]
 impl SetupError {
     /// Creates a new SetupError with context information
     pub fn new<E>(context: impl Into<String>, err: E) -> Error

@@ -167,7 +167,7 @@ fn named_struct(attrs: &[Attribute], fields: &FieldsNamed) -> Result<TokenStream
                 }
             }
         } else {
-            let base_schema = generate_base_schema(&field.ty, schema_attrs.as_schema.as_ref().map(|v| &**v));
+            let base_schema = generate_base_schema(&field.ty, schema_attrs.as_schema.as_deref());
             let nullable_is_specified = schema_attrs.nullable.is_some();
             quote! {
                 {
@@ -285,7 +285,7 @@ mod test {
                         }
                         // If we Err here, we won't get the error
                     };
-                    return Ok(());
+                    Ok(())
                 })
                 .unwrap();
             }

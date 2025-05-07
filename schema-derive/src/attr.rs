@@ -4,6 +4,7 @@
 //! - Field renaming strategies (camelCase, snake_case, etc)
 //! - Serde attribute compatibility
 //! - Type customization via attributes
+//!
 //! Serde-compatible field renaming strategies
 //!
 //! Supported naming conventions:
@@ -47,7 +48,7 @@ pub(crate) fn parse_top(attrs: &[Attribute]) -> Result<TopAttr, Error> {
     let mut rename_all = want.extract("rename_all")?;
     let nullable = want.extract_bool("nullable")?;
 
-    if !ignore_serde.is_some() && rename_all.is_none() {
+    if ignore_serde.is_none() && rename_all.is_none() {
         // let's use serde's rename
 
         want = want.re_var(["rename_all"]);
@@ -273,7 +274,7 @@ impl<const K: usize> SetAttributes<K> {
     fn disallow_argument<const N: usize>(mut self, attrs: [&'static str; N]) -> Self {
         for attr in attrs {
             self.get_mut(&attr)
-                .expect(&format!("{attr} should exist"))
+                .unwrap_or_else(|| panic!("{attr} should exist"))
                 .arg_taking = ArgTaking::MustNot
         }
 
@@ -298,7 +299,7 @@ impl<const K: usize> SetAttributes<K> {
         one_ofs: [&'static str; N],
         maybe_empty: bool,
     ) -> Self {
-        let a = self.get_mut(attr).expect(&format!("{attr} should exist"));
+        let a = self.get_mut(attr).unwrap_or_else(|| panic!("{attr} should exist"));
         if maybe_empty {
             a.arg_taking = ArgTaking::MayNot;
         }
@@ -309,7 +310,7 @@ impl<const K: usize> SetAttributes<K> {
 
     fn extract_bool(&mut self, name: &str) -> Result<Option<bool>, Error> {
         Ok(self.extract(name)?
-            .map(|v| v.to_lowercase() != "false".to_owned()))
+            .map(|v| v.to_lowercase() != *"false"))
     }
 
     fn extract_literal(&mut self, name: &str) -> Option<syn::LitStr> {
@@ -360,7 +361,7 @@ impl<const K: usize> SetAttributes<K> {
             return None;
         }
 
-        Some(self.remove(name).expect(&format!("{name} should exist")))
+        Some(self.remove(name).unwrap_or_else(|| panic!("{name} should exist")))
     }
 
     fn find_attrs(&mut self, attrs: &[Attribute], owner: &str) -> Result<(), Error> {
@@ -413,7 +414,7 @@ impl<const K: usize> SetAttributes<K> {
                             )));
                         }
                     };
-                    return Ok(());
+                    Ok(())
                 })?;
             }
         }
@@ -432,13 +433,13 @@ fn format_possible_values(mut ps: Vec<&&str>, and_or: &str) -> String {
     let len = ps.len() as i64;
     for (i, p) in ps.iter().enumerate() {
         out.push('`');
-        out.push_str(&p);
+        out.push_str(p);
         out.push('`');
 
         if i as i64 == len - 2 {
             out.push_str(", ");
             out.push_str(and_or);
-            out.push_str(" ");
+            out.push(' ');
         } else if i as i64 != len - 1 {
             out.push_str(", ");
         }
@@ -463,7 +464,7 @@ impl<const K: usize> DerefMut for SetAttributes<K> {
 pub(crate) use case::{no_rename, rename_all, rename_all_variants};
 
 mod case {
-    pub(crate) static SUPPORTED: [&'static str; 8] = [
+    pub(crate) static SUPPORTED: [&str; 8] = [
         "camelCase",
         "snake_case",
         "lowercase",
@@ -485,8 +486,7 @@ mod case {
             let parts = Self::tokenize(name);
             let mut out = String::new();
 
-            let mut i = 0;
-            for part in parts {
+            for (i, part) in parts.iter().enumerate() {
                 if i == 0 {
                     out.push_str(&part.to_ascii_lowercase());
                 } else {
@@ -494,7 +494,6 @@ mod case {
                         &(part[..1].to_ascii_uppercase() + &part[1..].to_ascii_lowercase()),
                     );
                 }
-                i += 1;
             }
 
             out
@@ -503,17 +502,19 @@ mod case {
         fn to_snake_case(name: &str) -> String {
             let parts = Self::tokenize(name);
             let mut out = String::new();
+            
+            if parts.is_empty() {
+                return out;
+            }
 
-            let mut i = 0;
-            let last = parts.len() as i64 - 1;
+            let last = parts.len() - 1;
 
-            for part in parts {
+            for (i, part) in parts.iter().enumerate() {
                 out.push_str(&part.to_ascii_lowercase());
 
                 if i != last {
                     out.push('_');
                 }
-                i += 1;
             }
 
             out
@@ -522,6 +523,7 @@ mod case {
         fn tokenize(name: &str) -> Vec<&str> {
             let mut out = Vec::new();
             #[derive(Clone, Copy)]
+            #[allow(clippy::enum_variant_names)]
             enum Last {
                 IsUpper,
                 IsLower,
@@ -599,14 +601,12 @@ mod case {
             let parts = Self::tokenize(name);
             let mut out = String::new();
 
-            let mut i = 0;
-            for part in parts {
+            for (i, part) in parts.iter().enumerate() {
                 if i == 0 {
                     out.push_str(&(part[..1].to_ascii_lowercase() + &part[1..]));
                 } else {
                     out.push_str(&(part[..1].to_ascii_uppercase() + &part[1..]));
                 }
-                i += 1;
             }
 
             out

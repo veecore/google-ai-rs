@@ -3,3 +3,5 @@ members = [
     "google-ai-rs",
     "schema-derive"
 ]
+
+resolver = "2"

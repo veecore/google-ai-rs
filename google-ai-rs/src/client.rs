@@ -66,10 +66,10 @@ impl Client {
     /// # Errors
     /// Returns [`Error::Setup`] for configuration issues or [`Error::Net`] for connection failures.
     pub async fn new(auth: Auth) -> Result<Self, Error> {
-        Ok(ClientBuilder::new()
+        ClientBuilder::new()
             .timeout(DEFAULT_TIMEOUT)
             .build(auth)
-            .await?)
+            .await
     }
 
     /// Create a builder for configuring client options
@@ -271,6 +271,12 @@ impl Client {
 #[derive(Debug, Clone)]
 pub struct ClientBuilder {
     endpoint: Endpoint,
+}
+
+impl Default for ClientBuilder {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl ClientBuilder {

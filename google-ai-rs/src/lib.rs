@@ -1,3 +1,5 @@
+#![allow(clippy::doc_lazy_continuation)]
+
 pub mod genai;
 pub mod auth;
 pub mod error;

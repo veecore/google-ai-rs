@@ -42,7 +42,7 @@ impl From<String> for Auth {
 /// JSON Web Token configuration for service account authentication
 #[derive(Deserialize, Clone, Debug)]
 pub struct JWTConfig {
-    /// Service account client email (format: <name>@<project>.iam.gserviceaccount.com)
+    /// Service account client email (format: name@project.iam.gserviceaccount.com)
     #[serde(rename = "client_email")]
     pub client_email: String,
 

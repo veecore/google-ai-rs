@@ -25,6 +25,7 @@ async fn basic_generation() -> Result<()> {
 #[tokio::test]
 #[ignore = "Requires API access"]
 async fn schema() -> Result<()> {
+    #[allow(dead_code)]
     #[derive(AsSchema, Deserialize)]
     #[schema(description = "A primary colour")]
     struct PrimaryColor {
@@ -139,7 +140,7 @@ async fn models() -> Result<()> {
     let mut want = HashSet::from(["models/gemini-1.5-pro", "models/embedding-001"]);
 
     loop {
-        if want.len() == 0 {
+        if want.is_empty() {
             return Ok(());
         }
 
@@ -152,7 +153,7 @@ async fn models() -> Result<()> {
         }
     }
 
-    if want.len() != 0 {
+    if !want.is_empty() {
         return Err(format!("missing expected model(s): {want:#?}").into());
     }
 

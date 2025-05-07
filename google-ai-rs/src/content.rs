@@ -244,7 +244,7 @@ impl Candidate {
             }
             return Some(out);
         }
-        return None;
+        None
     }
 }
 
