@@ -715,10 +715,7 @@ mod case {
                 Test {
                     title: "normal snake_case",
                     input: "hello_world",
-                    wants: vec![
-                        (Case::camel, "helloWorld"),
-                        (Case::Pascal, "HelloWorld"),
-                    ],
+                    wants: vec![(Case::camel, "helloWorld"), (Case::Pascal, "HelloWorld")],
                 },
                 Test {
                     title: "`_` mayhem",
@@ -791,10 +788,7 @@ mod case {
                 Test {
                     title: "consecutive capitals",
                     input: "HTTPRequest",
-                    wants: vec![
-                        (Case::snake, "http_request"),
-                        (Case::camel, "httpRequest"),
-                    ],
+                    wants: vec![(Case::snake, "http_request"), (Case::camel, "httpRequest")],
                 },
                 Test {
                     title: "consecutive capitals (1)",
@@ -817,10 +811,7 @@ mod case {
                 Test {
                     title: "normal PascalCase",
                     input: "HelloWorld",
-                    wants: vec![
-                        (Case::snake, "hello_world"),
-                        (Case::camel, "helloWorld"),
-                    ],
+                    wants: vec![(Case::snake, "hello_world"), (Case::camel, "helloWorld")],
                 },
             ];
 
