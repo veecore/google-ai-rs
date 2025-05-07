@@ -149,10 +149,15 @@ fn named_struct(attrs: &[Attribute], fields: &FieldsNamed) -> Result<TokenStream
             let t = ty.value();
             // are we doing too much? Only if we could warn instead
             match (t.as_str(), format.as_str()) {
-                ("Number" | "Integer" , "float" | "double" | "int32" | "int64") => {},
-                ("String", "enum") => {},
-                (_, "") => {},
-                (t, f) => return Err(Error::new(ty.span(), format!("format `{f}` not supported for SchemaType::{t}")))
+                ("Number" | "Integer", "float" | "double" | "int32" | "int64") => {}
+                ("String", "enum") => {}
+                (_, "") => {}
+                (t, f) => {
+                    return Err(Error::new(
+                        ty.span(),
+                        format!("format `{f}` not supported for SchemaType::{t}"),
+                    ))
+                }
             };
 
             let ty = Ident::new(&t, ty.span());
@@ -257,7 +262,7 @@ fn generate_base_schema(ty: &Type, as_schema: Option<&syn::LitStr>) -> TokenStre
         let f = syn::Ident::new(&as_schema.value(), as_schema.span());
         quote! { #f() } // find nicer way
     } else {
-        quote! { <#ty as ::google_ai_rs::AsSchema>::as_schema() }        
+        quote! { <#ty as ::google_ai_rs::AsSchema>::as_schema() }
     }
 }
 

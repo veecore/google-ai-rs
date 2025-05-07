@@ -7,7 +7,6 @@ use crate::{
     proto::{part::Data, Candidate, CitationMetadata, Content, GenerateContentResponse, Part},
 };
 
-
 /// Interactive chat session maintaining conversation history
 ///
 /// # Example
@@ -60,7 +59,7 @@ impl<'m> Session<'m> {
     }
 
     /// Starts a streaming response while maintaining session state
-    /// 
+    ///
     /// `NOTE`: history is only added if whole message is consumed
     pub async fn stream_send_message<'s, T>(
         &'s mut self,
@@ -71,7 +70,10 @@ impl<'m> Session<'m> {
     {
         self.history.extend(contents.into_contents());
 
-        let stream = self.model.stream_generate_content(self.history.clone()).await?;
+        let stream = self
+            .model
+            .stream_generate_content(self.history.clone())
+            .await?;
 
         Ok(ResponseStream {
             inner: stream,
@@ -247,7 +249,10 @@ fn merge_citations(mut existing: CitationMetadata, update: &CitationMetadata) ->
 #[cfg(test)]
 mod tests {
     use super::{merge_candidates, merge_parts};
-    use crate::{content::IntoParts, proto::{Candidate, Content, Part}};
+    use crate::{
+        content::IntoParts,
+        proto::{Candidate, Content, Part},
+    };
 
     impl Content {
         fn model<P>(parts: P) -> Self
@@ -343,10 +348,10 @@ mod tests {
                 logprobs_result: None,
             },
         ];
-        
+
         merge_candidates(&mut c1, &c2);
         assert_eq!(c1, want);
-        let mut c3 = vec![]; 
+        let mut c3 = vec![];
         merge_candidates(&mut c3, &want);
         assert_eq!(c3, want);
     }

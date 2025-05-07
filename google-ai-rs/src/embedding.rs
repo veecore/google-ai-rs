@@ -1,9 +1,9 @@
 use tonic::IntoRequest;
 
 use crate::{
-    full_model_name,
     content::IntoContent,
     error::status_into_error,
+    full_model_name,
     proto::{BatchEmbedContentsResponse, Content, EmbedContentResponse, Model as Info, TaskType},
 };
 
@@ -147,10 +147,7 @@ impl<'c> Model<'c> {
     /// # Ok(())
     /// # }
     /// ```
-    pub async fn embed_batch<I, T>(
-        &self,
-        contents: I,
-    ) -> Result<BatchEmbedContentsResponse, Error>
+    pub async fn embed_batch<I, T>(&self, contents: I) -> Result<BatchEmbedContentsResponse, Error>
     where
         I: IntoIterator<Item = T>,
         T: IntoContent,
@@ -177,11 +174,7 @@ impl<'c> Model<'c> {
         Ok(request)
     }
 
-    fn _build_request(
-        &self,
-        title: &str,
-        content: Content,
-    ) -> EmbedContentRequest {
+    fn _build_request(&self, title: &str, content: Content) -> EmbedContentRequest {
         let title = if title.is_empty() {
             None
         } else {

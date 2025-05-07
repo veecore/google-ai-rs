@@ -21,7 +21,9 @@
 //! `ignore_serde` in struct attributes.
 
 use std::{
-    collections::HashMap, fmt::Debug, ops::{Deref, DerefMut}
+    collections::HashMap,
+    fmt::Debug,
+    ops::{Deref, DerefMut},
 };
 
 use proc_macro2::Span;
@@ -76,7 +78,7 @@ pub(crate) struct Attr {
     pub(crate) skip: Option<bool>,
 }
 
-pub(crate) struct LitStr(syn::LitStr, );
+pub(crate) struct LitStr(syn::LitStr);
 
 impl Debug for LitStr {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -299,7 +301,9 @@ impl<const K: usize> SetAttributes<K> {
         one_ofs: [&'static str; N],
         maybe_empty: bool,
     ) -> Self {
-        let a = self.get_mut(attr).unwrap_or_else(|| panic!("{attr} should exist"));
+        let a = self
+            .get_mut(attr)
+            .unwrap_or_else(|| panic!("{attr} should exist"));
         if maybe_empty {
             a.arg_taking = ArgTaking::MayNot;
         }
@@ -309,8 +313,7 @@ impl<const K: usize> SetAttributes<K> {
     }
 
     fn extract_bool(&mut self, name: &str) -> Result<Option<bool>, Error> {
-        Ok(self.extract(name)?
-            .map(|v| v.to_lowercase() != *"false"))
+        Ok(self.extract(name)?.map(|v| v.to_lowercase() != *"false"))
     }
 
     fn extract_literal(&mut self, name: &str) -> Option<syn::LitStr> {
@@ -318,7 +321,7 @@ impl<const K: usize> SetAttributes<K> {
             match attr_prop.value {
                 Some(Value::LitStr(lit)) => Some(lit),
                 None => None,
-                _ => panic!("{name} is not syn::LitStr")
+                _ => panic!("{name} is not syn::LitStr"),
             }
         } else {
             None
@@ -361,7 +364,10 @@ impl<const K: usize> SetAttributes<K> {
             return None;
         }
 
-        Some(self.remove(name).unwrap_or_else(|| panic!("{name} should exist")))
+        Some(
+            self.remove(name)
+                .unwrap_or_else(|| panic!("{name} should exist")),
+        )
     }
 
     fn find_attrs(&mut self, attrs: &[Attribute], owner: &str) -> Result<(), Error> {
@@ -393,10 +399,14 @@ impl<const K: usize> SetAttributes<K> {
                                     attr_prop.value = Some(Value::LitStr(value.parse()?));
                                 }
                                 (Ok(_), ArgTaking::MustNot) => {
-                                    return Err(meta.error(format!("schema attribute {s_attr} takes no argument")))
+                                    return Err(meta.error(format!(
+                                        "schema attribute {s_attr} takes no argument"
+                                    )))
                                 }
                                 (Err(_), ArgTaking::Takes) => {
-                                    return Err(meta.error(format!("schema attribute {s_attr} needs argument")))
+                                    return Err(meta.error(format!(
+                                        "schema attribute {s_attr} needs argument"
+                                    )))
                                 }
                                 (Err(_), ArgTaking::MayNot | ArgTaking::MustNot) => {
                                     attr_prop.value = Some(Value::Empty)
@@ -502,7 +512,7 @@ mod case {
         fn to_snake_case(name: &str) -> String {
             let parts = Self::tokenize(name);
             let mut out = String::new();
-            
+
             if parts.is_empty() {
                 return out;
             }

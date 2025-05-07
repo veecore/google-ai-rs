@@ -1,14 +1,22 @@
 use std::{
-    borrow::Cow, cell::{Cell, RefCell, RefMut}, collections::{BTreeSet, BinaryHeap, HashSet, LinkedList, VecDeque}, ffi::{CStr, CString}, hash::Hash, num::{
+    borrow::Cow,
+    cell::{Cell, RefCell, RefMut},
+    collections::{BTreeSet, BinaryHeap, HashSet, LinkedList, VecDeque},
+    ffi::{CStr, CString},
+    hash::Hash,
+    num::{
         NonZeroI128, NonZeroI16, NonZeroI32, NonZeroI64, NonZeroI8, NonZeroIsize, NonZeroU128,
         NonZeroU16, NonZeroU32, NonZeroU64, NonZeroU8, NonZeroUsize,
-    }, path::{Path, PathBuf}, rc::{Rc, Weak}, sync::{
+    },
+    path::{Path, PathBuf},
+    rc::{Rc, Weak},
+    sync::{
         atomic::{
             AtomicBool, AtomicI16, AtomicI32, AtomicI64, AtomicI8, AtomicIsize, AtomicU16,
             AtomicU32, AtomicU64, AtomicU8, AtomicUsize,
         },
         Arc, Mutex, RwLock, Weak as ArcWeak,
-    }
+    },
 };
 use tokio::sync::{Mutex as TMutex, RwLock as TRwLock};
 
@@ -19,12 +27,12 @@ use crate::proto::{Schema, Type};
 pub type SchemaType = Type;
 
 /// Trait for Rust types that can generate `Schema` (a subset of OpenAPI schemas) automatically.
-/// 
+///
 /// Implement this trait or derive `AsSchema` to enable schema generation for your types.
 /// The derive macro supports extensive customization through attributes and integrates with Serde.
-/// 
+///
 /// # Examples
-/// 
+///
 /// ```rust
 /// use google_ai_rs::AsSchema;
 ///
@@ -35,7 +43,7 @@ pub type SchemaType = Type;
 ///     data: String,
 /// }
 /// ```
-/// 
+///
 /// For foreign types, manually implement or use schema attributes:
 /// ```rust
 /// use google_ai_rs::AsSchema;
@@ -72,13 +80,13 @@ pub type SchemaType = Type;
 /// }
 /// ```
 /// # Serde Compatibility
-/// 
+///
 /// - `#[serde(rename)]`/`#[serde(rename_all)]` are automatically respected
 /// - `#[serde(skip)]` fields are excluded from schemas by default
 /// - Disable Serde integration with `#[schema(ignore_serde)]`
-/// 
+///
 /// # Examples
-/// 
+///
 /// ```rust
 /// use google_ai_rs::AsSchema;
 ///

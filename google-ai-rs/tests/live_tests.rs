@@ -1,5 +1,6 @@
 use google_ai_rs::{
-    genai::{GenerativeModel, Info}, AsSchema, Client
+    genai::{GenerativeModel, Info},
+    AsSchema, Client,
 };
 
 use serde::Deserialize;
@@ -161,7 +162,6 @@ async fn models() -> Result<()> {
 }
 
 type Result<T> = std::result::Result<T, Box<dyn Error + Send + Sync>>;
-
 
 async fn default_model_instance() -> Result<GenerativeModel<'static>> {
     let mut model = get_client().await?.generative_model(DEFAULT_MODEL);

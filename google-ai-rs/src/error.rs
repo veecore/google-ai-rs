@@ -70,7 +70,6 @@ impl From<AuthError> for Error {
     }
 }
 
-
 /// Error occurring during client setup/configuration
 #[derive(Debug)]
 pub struct SetupError {
@@ -261,7 +260,6 @@ pub(super) fn status_into_error(status: tonic::Status) -> Error {
         Error::Service(ServiceError::ApiError(TonicStatus(status)))
     }
 }
-
 
 impl From<ServiceError> for Error {
     fn from(err: ServiceError) -> Self {

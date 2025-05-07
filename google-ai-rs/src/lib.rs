@@ -1,35 +1,34 @@
 #![allow(clippy::doc_lazy_continuation)]
 
-pub mod genai;
 pub mod auth;
-pub mod error;
-pub mod proto;
-pub mod embedding;
-pub mod client;
 pub mod chat;
+pub mod client;
 pub mod content;
+pub mod embedding;
+pub mod error;
+pub mod genai;
+pub mod proto;
 pub mod schema;
 pub use auth::Auth;
 pub use client::Client;
-pub use genai::GenerativeModel;
 pub use error::Error;
+pub use genai::GenerativeModel;
 
-pub use crate::schema::SchemaType;
 pub use crate::proto::Schema;
 pub use crate::schema::AsSchema;
-pub use proto::Part;
-pub use proto::Content;
+pub use crate::schema::SchemaType;
 pub use proto::CachedContent;
 pub use proto::Candidate;
+pub use proto::Content;
+pub use proto::FunctionCall;
+pub use proto::GenerationConfig;
+pub use proto::Part;
 pub use proto::TaskType;
 pub use proto::Tool;
-pub use proto::GenerationConfig;
-pub use proto::FunctionCall;
 
 extern crate schema_derive;
 
 pub use schema_derive::*;
-
 
 /// Formats model names to full resource path format
 ///
