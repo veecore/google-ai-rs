@@ -24,4 +24,4 @@ base64 = "0.22.1"
 rand = "0.8"
 serde = { version = "1.0.219" , features = ["derive"] }
 serde_json = { version = "1.0.140" }
-google-ai-schema-derive = { version = "0.1.0", path = "../google-ai-schema-derive"}
+google-ai-schema-derive = "0.1.0"
