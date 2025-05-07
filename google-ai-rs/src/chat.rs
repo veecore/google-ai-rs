@@ -103,7 +103,7 @@ pub struct ResponseStream<'s, 'm> {
     is_complete: bool,
 }
 
-impl<'s, 'm> ResponseStream<'s, 'm> {
+impl ResponseStream<'_, '_> {
     /// Streams content chunks to any `Write` implementer
     ///
     /// # Returns

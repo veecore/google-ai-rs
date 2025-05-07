@@ -220,7 +220,7 @@ pub struct Batch<'m> {
     req: BatchEmbedContentsRequest,
 }
 
-impl<'m> Batch<'m> {
+impl Batch<'_> {
     /// Adds content to the batch
     pub fn add_content<T: IntoContent>(self, content: T) -> Self {
         self.add_content_with_title("", content)
