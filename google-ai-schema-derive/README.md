@@ -1,3 +1,7 @@
+[![crates.io](https://img.shields.io/crates/v/google-ai-schema-derive)](https://crates.io/crates/google-ai-schema-derive)
+[![Documentation](https://docs.rs/google-ai-schema-derive/badge.svg)](https://docs.rs/google-ai-schema-derive)
+[![CI Status](https://github.com/veecore/google-ai-rs/actions/workflows/ci.yml/badge.svg)](https://github.com/veecore/google-ai-rs/actions)
+
 # Schema-Derive for Google AI (Rust)
 
 **Type-Safe Schema Generation for Gemini API Interactions**

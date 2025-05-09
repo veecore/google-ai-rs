@@ -1,3 +1,7 @@
+[![crates.io](https://img.shields.io/crates/v/google-ai-rs)](https://crates.io/crates/google-ai-rs)
+[![Documentation](https://docs.rs/google-ai-rs/badge.svg)](https://docs.rs/google-ai-rs)
+[![CI Status](https://github.com/veecore/google-ai-rs/actions/workflows/ci.yml/badge.svg)](https://github.com/veecore/google-ai-rs/actions)
+
 # 🌟 Google AI in Rust: Delightfully Safe & Expressive
 
 **Meet your new favorite way to interact with Google's Generative AI -  
@@ -104,12 +108,12 @@ Client::builder()
 1. Add the crate:
 ```toml
 [dependencies]
-google-genai-rs = { version = "0.1.0" }
+google-ai-rs = { version = "0.1.0" }
 ```
 
 2. Basic usage:
 ```rust
-use google_genai_rs::{Client, generative::GenerativeModel};
+use google_ai_rs::{Client, generative::GenerativeModel};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
