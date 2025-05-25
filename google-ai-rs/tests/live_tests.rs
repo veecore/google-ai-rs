@@ -1,13 +1,19 @@
 use google_ai_rs::{
     genai::{GenerativeModel, Info},
-    AsSchema, Client,
+    AsSchema, Client, Map,
 };
+use google_ai_schema_derive::AsSchemaWithSerde;
 
 use serde::Deserialize;
-use std::{collections::HashSet, env, error::Error, io};
+use std::{
+    collections::{HashMap, HashSet},
+    env,
+    error::Error,
+    io,
+};
 use tokio::sync::OnceCell;
 
-const DEFAULT_MODEL: &str = "gemini-1.5-flash";
+const DEFAULT_MODEL: &str = "gemini-2.0-flash";
 
 static CLIENT: OnceCell<Result<Client>> = OnceCell::const_new();
 
@@ -39,13 +45,49 @@ async fn schema() -> Result<()> {
 
     let mut model = get_client()
         .await?
-        .generative_model("gemini-1.5-pro-latest")
+        .generative_model(DEFAULT_MODEL)
         .as_response_schema::<Vec<PrimaryColor>>();
 
     model.set_temperature(0.0);
 
     let response = model.generate_content("List the primary colors.").await?;
     serde_json::from_slice::<Vec<PrimaryColor>>(&response.into_bytes())?;
+    Ok(())
+}
+
+#[tokio::test]
+#[ignore = "Requires API access"]
+async fn data_structures_and_typed_model() -> Result<()> {
+    #[derive(AsSchema, Deserialize, PartialEq, Eq, Hash)]
+    #[schema(description = "High-end fashion bag details")]
+    struct FashionBag {
+        #[schema(description = "Designer brand name")]
+        brand: String,
+        #[schema(description = "Style category: tote/clutch/crossbody/etc")]
+        style: String,
+        #[schema(description = "Primary material: leather/canvas/etc")]
+        material: String,
+    }
+
+    #[allow(dead_code)]
+    #[derive(AsSchemaWithSerde)]
+    #[schema(description = "Pricing information")]
+    struct PriceInfo(
+        #[schema(description = "Retail price in USD")] f32,
+        #[schema(description = "Currency code")] String,
+        #[schema(description = "In stock status")] bool,
+    );
+
+    let model = get_client()
+        .await?
+        .typed_model::<Map<HashMap<FashionBag, PriceInfo>>>(DEFAULT_MODEL);
+
+    let fashion_bags = model
+        .generate_content("List 5 luxury bags from Paris Fashion Week.")
+        .await?;
+
+    assert!(fashion_bags.is_empty());
+
     Ok(())
 }
 

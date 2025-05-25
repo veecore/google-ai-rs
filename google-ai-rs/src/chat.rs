@@ -1,7 +1,7 @@
 use std::{collections::HashMap, io::Write};
 
 use crate::{
-    content::IntoContents,
+    content::TryIntoContents,
     error::{ActionError, Error, ServiceError},
     genai::{GenerativeModel, ResponseStream as GenResponseStream},
     proto::{part::Data, Candidate, CitationMetadata, Content, GenerateContentResponse, Part},
@@ -44,9 +44,9 @@ impl<'m> Session<'m> {
     /// Returns [`Error::Service`] if no valid candidates in response
     pub async fn send_message<T>(&mut self, contents: T) -> Result<GenerateContentResponse, Error>
     where
-        T: IntoContents,
+        T: TryIntoContents,
     {
-        self.history.extend(contents.into_contents());
+        self.history.extend(contents.try_into_contents()?);
 
         let response = self.model.generate_content(self.history.clone()).await?;
 
@@ -66,9 +66,9 @@ impl<'m> Session<'m> {
         contents: T,
     ) -> Result<ResponseStream<'s, 'm>, Error>
     where
-        T: IntoContents,
+        T: TryIntoContents,
     {
-        self.history.extend(contents.into_contents());
+        self.history.extend(contents.try_into_contents()?);
 
         let stream = self
             .model

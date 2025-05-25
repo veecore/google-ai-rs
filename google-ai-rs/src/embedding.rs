@@ -1,7 +1,7 @@
 use tonic::IntoRequest;
 
 use crate::{
-    content::IntoContent,
+    content::{IntoContent, TryIntoContent},
     error::status_into_error,
     full_model_name,
     proto::{BatchEmbedContentsResponse, Content, EmbedContentResponse, Model as Info, TaskType},
@@ -94,7 +94,7 @@ impl<'c> Model<'c> {
     ///
     /// # Errors
     /// Returns `Error::Net` for transport-level errors or `Error::Service` for service errors
-    pub async fn embed_content<T: IntoContent>(
+    pub async fn embed_content<T: TryIntoContent>(
         &self,
         content: T,
     ) -> Result<EmbedContentResponse, Error> {
@@ -106,12 +106,17 @@ impl<'c> Model<'c> {
     /// # Arguments
     /// * `title` - Optional document title for retrieval tasks
     /// * `parts` - Content input that converts to parts
-    pub async fn embed_content_with_title<T: IntoContent>(
+    pub async fn embed_content_with_title<T>(
         &self,
         title: &str,
         content: T,
-    ) -> Result<EmbedContentResponse, Error> {
-        let request = self.build_request(title, content.into_content()).await?;
+    ) -> Result<EmbedContentResponse, Error>
+    where
+        T: TryIntoContent,
+    {
+        let request = self
+            .build_request(title, content.try_into_content()?)
+            .await?;
         self.client
             .gc
             .clone()
@@ -150,11 +155,11 @@ impl<'c> Model<'c> {
     pub async fn embed_batch<I, T>(&self, contents: I) -> Result<BatchEmbedContentsResponse, Error>
     where
         I: IntoIterator<Item = T>,
-        T: IntoContent,
+        T: TryIntoContent,
     {
         let mut batch = self.new_batch();
         for content in contents.into_iter() {
-            batch = batch.add_content(content);
+            batch = batch.add_content(content.try_into_content()?);
         }
         batch.embed().await
     }
@@ -254,11 +259,14 @@ impl Batch<'_> {
             .map(|response| response.into_inner())?;
 
         if response.embeddings.len() != expected {
-            return Err(Error::Service(ServiceError::InvalidResponse(format!(
-                "Expected {} embeddings, got {}",
-                expected,
-                response.embeddings.len()
-            ))));
+            return Err(Error::Service(ServiceError::InvalidResponse(
+                format!(
+                    "Expected {} embeddings, got {}",
+                    expected,
+                    response.embeddings.len()
+                )
+                .into(),
+            )));
         }
 
         Ok(response)
