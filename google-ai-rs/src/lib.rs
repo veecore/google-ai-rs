@@ -36,33 +36,29 @@ pub mod content;
 pub mod embedding;
 pub mod error;
 pub mod genai;
+pub mod proto;
 pub mod schema;
 pub use auth::Auth;
 pub use client::Client;
 pub use error::Error;
-pub use genai::{GenerativeModel, TypedModel, TypedResponse};
+pub use genai::GenerativeModel;
 
 pub use crate::proto::Schema;
-pub use crate::schema::{AsSchema, Map, MapTrait, SchemaType, Tuple};
-
-pub use content::{
-    IntoContent, IntoContents, IntoParts, TryFromCandidates, TryFromContents, TryIntoContent,
-    TryIntoContents,
-};
-pub use proto::{
-    part::Data, CachedContent, Candidate, Content, FunctionCall, GenerationConfig, Part, TaskType,
-    Tool,
-};
+pub use crate::schema::AsSchema;
+pub use crate::schema::SchemaType;
+pub use proto::CachedContent;
+pub use proto::Candidate;
+pub use proto::Content;
+pub use proto::FunctionCall;
+pub use proto::GenerationConfig;
+pub use proto::Part;
+pub use proto::TaskType;
+pub use proto::Tool;
 
 extern crate google_ai_schema_derive;
 
-pub use google_ai_schema_derive::AsSchema;
+pub use google_ai_schema_derive::*;
 
-#[cfg(feature = "serde")]
-pub use google_ai_schema_derive::AsSchemaWithSerde;
-
-#[doc(hidden)]
-pub mod proto;
 /// Formats model names to full resource path format
 ///
 /// Ensures model names follow `models/{model}` format.
@@ -70,7 +66,7 @@ fn full_model_name(name: &str) -> String {
     if name.contains('/') {
         name.into()
     } else {
-        format!("models/{name}")
+        format!("models/{}", name)
     }
 }
 

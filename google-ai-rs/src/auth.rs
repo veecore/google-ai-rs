@@ -27,9 +27,15 @@ pub enum Auth {
     TokenSource(TokenSource),
 }
 
-impl<S: Into<String>> From<S> for Auth {
-    fn from(value: S) -> Self {
-        Auth::ApiKey(value.into())
+impl From<&str> for Auth {
+    fn from(value: &str) -> Self {
+        value.to_owned().into()
+    }
+}
+
+impl From<String> for Auth {
+    fn from(value: String) -> Self {
+        Auth::ApiKey(value)
     }
 }
 
@@ -57,7 +63,7 @@ pub struct JWTConfig {
 #[derive(Clone, Debug)]
 pub enum TokenSource {
     /// JSON Web Token authentication flow
-    Jwt { jwt: Box<JwtService> },
+    Jwt { jwt: JwtService },
 }
 
 /// Authentication error types
@@ -148,14 +154,14 @@ impl TokenSource {
         let signing_key = SigningKey::<Sha256>::new(private_key);
 
         Ok(Self::Jwt {
-            jwt: Box::new(JwtService {
+            jwt: JwtService {
                 config,
                 signing_key,
                 cache: Arc::new(RwLock::new(JwtCache {
                     token: MetadataValue::from_static(""),
                     expires_at: SystemTime::now(),
                 })),
-            }),
+            },
         })
     }
 }
@@ -225,7 +231,7 @@ impl JwtService {
 
         let encoded_header = URL_SAFE_NO_PAD.encode(serde_json::to_vec(&header)?);
         let encoded_claims = URL_SAFE_NO_PAD.encode(serde_json::to_vec(&claims)?);
-        let message = format!("{encoded_header}.{encoded_claims}");
+        let message = format!("{}.{}", encoded_header, encoded_claims);
 
         let signature = self
             .signing_key
@@ -233,7 +239,7 @@ impl JwtService {
             .to_bytes();
 
         let encoded_sig = URL_SAFE_NO_PAD.encode(signature);
-        let jwt = format!("{message}.{encoded_sig}");
+        let jwt = format!("{}.{}", message, encoded_sig);
         let expires_at = now + lifetime;
 
         Ok((jwt, expires_at))
@@ -254,7 +260,7 @@ impl JwtService {
         let mut cache = self.cache.write().await;
 
         *cache = JwtCache {
-            token: format!("Bearer {new_token}")
+            token: format!("Bearer {}", new_token)
                 .parse()
                 .map_err(|_| Error::InvalidHeader)?,
             expires_at,

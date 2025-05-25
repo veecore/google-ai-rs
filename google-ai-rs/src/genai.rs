@@ -1,202 +1,20 @@
-use std::{
-    fmt::Debug,
-    io::Write,
-    ops::{Deref, DerefMut},
-};
+use core::fmt;
+use std::io::Write;
 use tonic::{IntoRequest, Streaming};
 
 use crate::{
     client::Client,
-    content::{IntoContent, TryFromCandidates, TryIntoContents},
+    content::{IntoContent as _, IntoContents},
     error::{status_into_error, ActionError, Error},
     full_model_name,
     proto::{
-        CachedContent, Content as ContentP, CountTokensRequest, CountTokensResponse,
+        part::Data, CachedContent, Content as ContentP, CountTokensRequest, CountTokensResponse,
         GenerateContentRequest, GenerateContentResponse, GenerationConfig as GenerationConfigP,
-        Model, SafetySetting as SafetySettingP, Schema, Tool as ToolP, ToolConfig as ToolConfigP,
-        TunedModel,
+        Model, Part, SafetySetting as SafetySettingP, Schema, Tool as ToolP,
+        ToolConfig as ToolConfigP, TunedModel,
     },
     schema::AsSchema,
 };
-
-/// Type-safe wrapper for [`GenerativeModel`] guaranteeing response type `T`.
-///
-/// This type enforces schema contracts through Rust's type system while maintaining
-/// compatibility with Google's Generative AI API. Use when:
-/// - You need structured output from the model
-/// - Response schema stability is critical
-/// - You want compile-time validation of response handling
-#[derive(Debug)]
-pub struct TypedModel<'c, T> {
-    inner: GenerativeModel<'c>,
-    _marker: std::marker::PhantomData<T>,
-}
-
-impl<'c, T> TypedModel<'c, T>
-where
-    T: AsSchema,
-{
-    /// Creates a new typed model with schema validation.
-    ///
-    /// # Arguments
-    /// - `client`: Authenticated API client
-    /// - `name`: Model name (e.g., "gemini-pro")
-    pub fn new(client: &'c Client, name: &str) -> Self {
-        let inner = GenerativeModel::new(client, name).as_response_schema::<T>();
-        Self {
-            inner,
-            _marker: std::marker::PhantomData,
-        }
-    }
-
-    /// Generates content with full response metadata.
-    ///
-    /// Returns both parsed content and raw API response.
-    ///
-    /// # Example
-    /// ```
-    /// # use google_ai_rs::{AsSchema, Client, TypedModel, TypedResponse};
-    /// # #[derive(AsSchema, serde::Deserialize, Debug)] struct StockAnalysis;
-    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
-    /// # let client = Client::new("api-key".into()).await?;
-    /// let model = TypedModel::<StockAnalysis>::new(&client, "gemini-pro");
-    /// let analysis: TypedResponse<StockAnalysis> = model.generate_typed_content((
-    ///     "Analyze NVDA stock performance",
-    ///     "Consider PE ratio and recent earnings"
-    /// )).await?;
-    /// println!("Analysis: {:?}", analysis);
-    /// # Ok(()) }
-    /// ```
-    pub async fn generate_typed_content<I>(&self, contents: I) -> Result<TypedResponse<T>, Error>
-    where
-        I: TryIntoContents,
-        T: TryFromCandidates,
-    {
-        let response = self.inner.generate_content(contents).await?;
-        let t = T::try_from_candidates(&response.candidates)?;
-        Ok(TypedResponse { t, raw: response })
-    }
-
-    /// Generates content and parses it directly into type `T`.
-    ///
-    /// This is the primary method for most users wanting type-safe responses without
-    /// dealing with raw API structures. For 90% of use cases where you just want
-    /// structured data from the AI, this is what you need.
-    ///
-    /// # Serde Integration
-    /// When the `serde` feature is enabled, any type implementing `serde::Deserialize`
-    /// automatically works with this method. Just define your response structure and
-    /// let the library handle parsing.
-    ///
-    /// # Example: Simple JSON Response
-    /// ```
-    /// # use google_ai_rs::{AsSchema, Client, TypedModel};
-    /// # use serde::Deserialize;
-    /// #[derive(AsSchema, Deserialize)]
-    /// struct StoryResponse {
-    ///     title: String,
-    ///     length: usize,
-    ///     tags: Vec<String>,
-    /// }
-    ///
-    /// # async fn run() -> Result<(), Box<dyn std::error::Error>> {
-    /// # let client = Client::new("key".into()).await?;
-    /// let model = TypedModel::<StoryResponse>::new(&client, "gemini-pro");
-    /// let story = model.generate_content("Write a short story about a robot astronaut").await?;
-    ///
-    /// println!("{} ({} words)", story.title, story.length);
-    /// # Ok(())
-    /// # }
-    /// ```
-    ///
-    /// # Example: Multi-part Input
-    /// ```
-    /// # use google_ai_rs::{AsSchema, Client, TypedModel, Part};
-    /// # use serde::Deserialize;
-    /// #[derive(AsSchema, Deserialize)]
-    /// struct Analysis { safety_rating: u8 }
-    ///
-    /// # async fn run() -> Result<(), Box<dyn std::error::Error>> {
-    /// # let client = Client::new("key".into()).await?;
-    /// # let image_data = vec![];
-    /// let model = TypedModel::<Analysis>::new(&client, "gemini-pro-vision");
-    /// let analysis = model.generate_content((
-    ///     "Analyze this scene safety:",
-    ///     Part::blob("image/jpeg", image_data),
-    ///     "Consider vehicles, pedestrians, and weather"
-    /// )).await?;
-    /// # Ok(())
-    /// # }
-    /// ```
-    ///
-    /// # Errors
-    /// - [`Error::InvalidArgument`] if input validation fails
-    /// - [`Error::Service`] for model errors
-    /// - [`Error::Net`] for network failures
-    pub async fn generate_content<I>(&self, contents: I) -> Result<T, Error>
-    where
-        I: TryIntoContents,
-        T: TryFromCandidates,
-    {
-        let response = self.inner.generate_content(contents).await?;
-        let t = T::try_from_candidates(&response.candidates)?;
-        Ok(t)
-    }
-}
-
-impl<'c, T> Deref for TypedModel<'c, T> {
-    type Target = GenerativeModel<'c>;
-
-    fn deref(&self) -> &Self::Target {
-        &self.inner
-    }
-}
-
-impl<'c, T> From<GenerativeModel<'c>> for TypedModel<'c, T>
-where
-    T: AsSchema,
-{
-    fn from(value: GenerativeModel<'c>) -> Self {
-        let inner = value.as_response_schema::<T>();
-        TypedModel {
-            inner,
-            _marker: std::marker::PhantomData,
-        }
-    }
-}
-
-/// Container for typed responses with raw API data.
-///
-/// Preserves full response details while providing parsed content.
-pub struct TypedResponse<T> {
-    /// Parsed content of type `T`    
-    pub t: T,
-    /// Raw API response structure    
-    pub raw: GenerateContentResponse,
-}
-
-impl<T> Debug for TypedResponse<T>
-where
-    T: Debug,
-{
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        self.t.fmt(f)
-    }
-}
-
-impl<T> Deref for TypedResponse<T> {
-    type Target = T;
-
-    fn deref(&self) -> &Self::Target {
-        &self.t
-    }
-}
-
-impl<T> DerefMut for TypedResponse<T> {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.t
-    }
-}
 
 /// Type aliases for protocol buffer types to simplify API surface
 type Content = ContentP;
@@ -262,10 +80,6 @@ impl<'c> GenerativeModel<'c> {
         }
     }
 
-    pub fn to_typed<T: AsSchema>(self) -> TypedModel<'c, T> {
-        self.into()
-    }
-
     /// Generates content from flexible input types
     ///
     /// # Example
@@ -295,9 +109,9 @@ impl<'c> GenerativeModel<'c> {
     /// [`Error::Service`] for model errors or [`Error::Net`] for transport failures
     pub async fn generate_content<T>(&self, contents: T) -> Result<GenerateContentResponse, Error>
     where
-        T: TryIntoContents,
+        T: IntoContents,
     {
-        let contents = contents.try_into_contents()?;
+        let contents = contents.into_contents();
         if contents.is_empty() {
             return Err(Error::InvalidArgument("Empty contents".into()));
         }
@@ -313,16 +127,6 @@ impl<'c> GenerativeModel<'c> {
             .map(|r| r.into_inner())
     }
 
-    pub async fn generate_typed_content<I, T>(&self, contents: I) -> Result<TypedResponse<T>, Error>
-    where
-        I: TryIntoContents,
-        T: AsSchema + TryFromCandidates,
-    {
-        self.clone()
-            .to_typed()
-            .generate_typed_content(contents)
-            .await
-    }
     /// Generates a streaming response from flexible input
     ///
     /// # Example
@@ -344,9 +148,9 @@ impl<'c> GenerativeModel<'c> {
     /// Returns [`Error::Service`] for model errors or [`Error::Net`] for transport failures
     pub async fn stream_generate_content<T>(&self, contents: T) -> Result<ResponseStream, Error>
     where
-        T: TryIntoContents,
+        T: IntoContents,
     {
-        let contents = contents.try_into_contents()?;
+        let contents = contents.into_contents();
         if contents.is_empty() {
             return Err(Error::InvalidArgument("Empty content".into()));
         }
@@ -387,9 +191,9 @@ impl<'c> GenerativeModel<'c> {
     /// Returns [`Error::InvalidArgument`] for empty input
     pub async fn count_tokens<T>(&self, contents: T) -> Result<CountTokensResponse, Error>
     where
-        T: TryIntoContents,
+        T: IntoContents,
     {
-        let contents = contents.try_into_contents()?;
+        let contents = contents.into_contents();
         if contents.is_empty() {
             return Err(Error::InvalidArgument("Empty content".into()));
         }
@@ -430,13 +234,8 @@ impl<'c> GenerativeModel<'c> {
     // -----------------------------------------------------------------
 
     /// Sets system-level behavior instructions
-    pub fn with_system_instruction<I: IntoContent>(mut self, instruction: I) -> Self {
+    pub fn with_system_instruction(mut self, instruction: &str) -> Self {
         self.system_instruction = Some(instruction.into_content());
-        self
-    }
-
-    pub fn to_model(mut self, to: &str) -> Self {
-        self.change_model(to);
         self
     }
 
@@ -463,7 +262,7 @@ impl<'c> GenerativeModel<'c> {
             c.name
                 .as_ref()
                 .ok_or(Error::InvalidArgument(
-                    "cached content name is empty".into(),
+                    "cached content name is empty".to_owned(),
                 ))?
                 .into(),
         );
@@ -536,15 +335,14 @@ impl<'c> GenerativeModel<'c> {
     /// ```
     pub fn with_response_schema(mut self, schema: Schema) -> Self {
         let c = self.generation_config.get_or_insert_with(Default::default);
-        if c.response_mime_type.is_empty() {
-            c.response_mime_type = "application/json".into();
-        }
-        c.response_schema = Some(schema);
+
+        c.response_mime_type = "application/json".into();
+        c.response_schema = Some(schema.clone());
         self
     }
 
     /// Creates a copy with new system instructions
-    pub fn with_cloned_instruction<I: IntoContent>(&self, instruction: I) -> Self {
+    pub fn with_cloned_instruction(&self, instruction: &str) -> Self {
         let mut clone = self.clone();
 
         clone.system_instruction = Some(instruction.into_content());
@@ -620,9 +418,92 @@ pub type Response = GenerateContentResponse;
 impl Response {
     /// Total tokens used in request/response cycle
     pub fn total_tokens(&self) -> i32 {
-        self.usage_metadata.as_ref().map_or(0, |meta| {
-            meta.total_token_count + meta.cached_content_token_count
+        self.usage_metadata
+            .as_ref()
+            .map_or(0, |meta| meta.total_token_count)
+    }
+
+    /// Serializes successful content text parts to String
+    pub fn text(self) -> String {
+        String::from_utf8(
+            self.try_into_bytes_with(|d| match d {
+                Some(Data::Text(text)) => Ok(text.into_bytes()),
+                _ => Ok(Vec::new()),
+            })
+            .unwrap(),
+        )
+        .unwrap()
+    }
+
+    /// Serializes successful content text and inline data parts to bytes
+    pub fn into_bytes(self) -> Vec<u8> {
+        self.try_into_bytes_with(|d| match d {
+            Some(Data::Text(text)) => Ok(text.into_bytes()),
+            Some(Data::InlineData(blob)) => Ok(blob.data),
+            _ => Ok(Vec::new()),
         })
+        .unwrap()
+    }
+
+    /// Serializes successful content text parts to String.
+    ///
+    /// returns InvalidContent if it encounters data apart from
+    /// text and inline data
+    pub fn try_into_bytes(self) -> Result<Vec<u8>, Error> {
+        self.try_into_bytes_with(|d| match d {
+            Some(Data::Text(text)) => Ok(text.into_bytes()),
+            _ => Err(Error::InvalidContent(
+                "InvalidContent encountered".to_owned(),
+            )),
+        })
+    }
+
+    pub fn try_into_bytes_with(
+        self,
+        m: impl Fn(Option<Data>) -> Result<Vec<u8>, Error>,
+    ) -> Result<Vec<u8>, Error> {
+        let mut output = Vec::new();
+
+        for candidate in self.candidates {
+            if let Some(content) = candidate.content {
+                for part in content.parts {
+                    output.extend(m(part.data)?)
+                }
+            }
+        }
+
+        Ok(output)
+    }
+}
+
+impl fmt::Display for Response {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        for candidate in &self.candidates {
+            if let Some(content) = &candidate.content {
+                write!(f, "{}", content)?;
+            }
+        }
+        Ok(())
+    }
+}
+
+impl fmt::Display for ContentP {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        for part in &self.parts {
+            write!(f, "{}", part)?;
+        }
+        Ok(())
+    }
+}
+
+impl fmt::Display for Part {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match &self.data {
+            Some(Data::Text(text)) => write!(f, "{}", text),
+            None => Ok(()),
+            // Handle other data types raw
+            other => write!(f, "{:?}", other),
+        }
     }
 }
 
@@ -667,13 +548,6 @@ impl Client {
     /// Shorthand for `GenerativeModel::new()`
     pub fn generative_model<'c>(&'c self, name: &str) -> GenerativeModel<'c> {
         GenerativeModel::new(self, name)
-    }
-
-    /// Creates a new typed generative model interface
-    ///
-    /// Shorthand for `TypedModel::new()`
-    pub fn typed_model<'c, T: AsSchema>(&'c self, name: &str) -> TypedModel<'c, T> {
-        TypedModel::<T>::new(self, name)
     }
 }
 

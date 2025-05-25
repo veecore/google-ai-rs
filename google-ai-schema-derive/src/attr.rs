@@ -30,47 +30,29 @@ use proc_macro2::Span;
 use syn::{Attribute, Error};
 
 /// Top-level type attributes for schema generation
-#[derive(Default)]
 pub(crate) struct TopAttr {
     pub(crate) description: Option<String>,
-    pub(crate) ignore_serde: Option<bool>,
+    pub(crate) ignore_serde: Option<bool>, // users might not like it
     pub(crate) rename_all: Option<String>,
-    pub(crate) rename_all_with: Option<LitStr>,
-    pub(crate) crate_path: Option<LitStr>,
     pub(crate) nullable: Option<bool>,
 }
 
 pub(crate) fn parse_top(attrs: &[Attribute]) -> Result<TopAttr, Error> {
-    parse_top_item::<0>(attrs, None)
-}
-
-fn parse_top_item<const N: usize>(
-    attrs: &[Attribute],
-    disallow: Option<[&'static str; N]>,
-) -> Result<TopAttr, Error> {
-    let mut want = SetAttributes::var([
-        "description",
-        "ignore_serde",
-        "rename_all",
-        "rename_all_with",
-        "crate_path",
-        "nullable",
-    ])
-    .allow_bool(["nullable", "ignore_serde"])
-    .only_allow_one_of("rename_all", case::SUPPORTED)
-    .disallow(disallow);
+    let mut want =
+        SetAttributes::<0>::var(["description", "ignore_serde", "rename_all", "nullable"])
+            .allow_bool(["nullable", "ignore_serde"])
+            .only_allow_one_of("rename_all", case::SUPPORTED);
 
     want.get_attrs(attrs, "schema")?;
 
     let description = want.extract("description")?;
     let ignore_serde = want.extract_bool("ignore_serde")?;
     let mut rename_all = want.extract("rename_all")?;
-    let rename_all_with = want.extract_literal("rename_all_with").map(Into::into);
-    let crate_path = want.extract_literal("crate_path").map(Into::into);
     let nullable = want.extract_bool("nullable")?;
 
     if ignore_serde.is_none() && rename_all.is_none() {
         // let's use serde's rename
+
         want = want.re_var(["rename_all"]);
         want.find_attrs(attrs, "serde")?;
         rename_all = want.extract("rename_all")?;
@@ -79,9 +61,7 @@ fn parse_top_item<const N: usize>(
     Ok(TopAttr {
         description,
         rename_all,
-        rename_all_with,
         nullable,
-        crate_path,
         ignore_serde,
     })
 }
@@ -92,11 +72,8 @@ pub(crate) struct Attr {
     pub(crate) format: Option<String>,
     pub(crate) r#type: Option<LitStr>,
     pub(crate) as_schema: Option<LitStr>,
-    pub(crate) as_schema_generic: Option<LitStr>,
     pub(crate) rename: Option<String>,
     pub(crate) required: Option<bool>,
-    pub(crate) min_items: Option<i64>,
-    pub(crate) max_items: Option<i64>,
     pub(crate) nullable: Option<bool>,
     pub(crate) skip: Option<bool>,
 }
@@ -143,25 +120,11 @@ pub(crate) fn parse_enum(attrs: &[Attribute], ignore_serde: bool) -> Result<Attr
     parse_item(
         attrs,
         ignore_serde,
-        Some([
-            "description",
-            "format",
-            "r#type",
-            "as_schema",
-            "as_schema_generic",
-            "min_items",
-            "max_items",
-            "required",
-            "nullable",
-        ]),
+        Some(["description", "format", "r#type", "required", "nullable"]),
     )
 }
 
-pub(crate) fn parse_tuple(attrs: &[Attribute], ignore_serde: bool) -> Result<Attr, Error> {
-    parse_item(attrs, ignore_serde, Some(["rename"]))
-}
-
-fn parse_item<const N: usize>(
+pub(crate) fn parse_item<const N: usize>(
     attrs: &[Attribute],
     ignore_serde: bool,
     disallow: Option<[&'static str; N]>,
@@ -171,11 +134,8 @@ fn parse_item<const N: usize>(
         "format",
         "r#type",
         "as_schema",
-        "as_schema_generic",
         "rename",
         "required",
-        "min_items",
-        "max_items",
         "nullable",
         "skip",
     ])
@@ -201,11 +161,8 @@ fn parse_item<const N: usize>(
     let format = want.extract("format")?;
     let r#type = want.extract_literal("r#type").map(Into::into);
     let as_schema = want.extract_literal("as_schema").map(Into::into);
-    let as_schema_generic = want.extract_literal("as_schema_generic").map(Into::into);
     let mut rename = want.extract("rename")?;
     let required = want.extract_bool("required")?;
-    let min_items = want.extract_int("min_items")?;
-    let max_items = want.extract_int("max_items")?;
     let nullable = want.extract_bool("nullable")?;
     let mut skip = want.extract_bool("skip")?;
 
@@ -235,30 +192,11 @@ fn parse_item<const N: usize>(
         format,
         r#type,
         as_schema,
-        as_schema_generic,
         rename,
         required,
-        min_items,
-        max_items,
         nullable,
         skip,
     })
-}
-
-pub(super) fn find_attrs<const N: usize>(
-    set_attrs: [&'static str; N],
-    attrs: &[Attribute],
-    owner: &str,
-) -> Result<[Option<LitStr>; N], Error> {
-    let mut sa = SetAttributes::<0>::var(set_attrs);
-    sa.find_attrs(attrs, owner)?;
-
-    let mut out = [const { None }; N];
-
-    for (i, set_attr) in set_attrs.iter().enumerate() {
-        out[i] = sa.extract_literal(set_attr).map(Into::into)
-    }
-    Ok(out)
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -372,17 +310,6 @@ impl<const K: usize> SetAttributes<K> {
         a.takes_one_of = one_ofs.to_vec();
 
         self
-    }
-
-    fn extract_int(&mut self, name: &str) -> Result<Option<i64>, Error> {
-        if let Some(v) = self.extract_literal(name) {
-            v.value()
-                .parse()
-                .map_err(|err| Error::new(v.span(), format!("schema attribute {name}: {err}")))
-                .map(Some)
-        } else {
-            Ok(None)
-        }
     }
 
     fn extract_bool(&mut self, name: &str) -> Result<Option<bool>, Error> {
@@ -544,283 +471,7 @@ impl<const K: usize> DerefMut for SetAttributes<K> {
     }
 }
 
-#[cfg(test)]
-mod test {
-    use crate::attr::{parse_enum, parse_field, Attr};
-    use syn::{parse_quote, Attribute, Data, DataStruct, Fields};
-
-    #[test]
-    fn unread_attribute() {
-        let attrs = get_fields_attrs(parse_quote!(
-            struct A {
-                #[attr(I_care_less = "something")]
-                field: String,
-            }
-        ));
-
-        for attr in &attrs[0] {
-            let result = if attr.path().is_ident("attr") {
-                attr.parse_nested_meta(|meta| {
-                    if let Some(ident) = meta.path.get_ident() {
-                        if ident == "what_I_want" {
-                            unimplemented!();
-                        }
-                        // If we Err here, we won't get the error
-                    };
-                    Ok(())
-                })
-            } else {
-                continue;
-            };
-            assert!(result.unwrap_err().to_string().contains("expected `,`"))
-        }
-    }
-
-    #[test]
-    fn struct_and_enum_attributes_validity() {
-        struct Test {
-            title: &'static str,
-            input: syn::DeriveInput,
-            should_fail: bool,
-            error_like: Option<Vec<&'static str>>,
-            is_enum: bool,
-        }
-
-        let tests = [
-            Test {
-                title: "invalid boolean",
-                input: parse_quote! {struct S {
-                    #[schema(skip = "f")]
-                    field: String
-                }},
-                should_fail: true,
-                error_like: Some(vec!["only takes one of", "true", "false"]),
-                is_enum: false,
-            },
-            Test {
-                title: "",
-                input: parse_quote! {struct S {
-                    #[schema(nullable = "false")]
-                    field: String
-                }},
-                should_fail: false,
-                error_like: None,
-                is_enum: false,
-            },
-            Test {
-                title: "valid no-value boolean",
-                input: parse_quote! {struct S {
-                    #[schema(skip)]
-                    field: String
-                }},
-                should_fail: false,
-                error_like: None,
-                is_enum: false,
-            },
-            Test {
-                title: "no argument for argument",
-                input: parse_quote! {struct S {
-                    #[schema(description)]
-                    field: String
-                }},
-                should_fail: true,
-                error_like: Some(vec!["needs argument"]),
-                is_enum: false,
-            },
-            Test {
-                title: "unknown attribute",
-                input: parse_quote! {struct S {
-                    #[schema(unknown = "attribute value")]
-                    field: String
-                }},
-                should_fail: true,
-                error_like: Some(vec!["unsupported"]),
-                is_enum: false,
-            },
-            Test {
-                title: "unconcerned unknown attribute",
-                input: parse_quote! {struct S {
-                    #[serde(unknown = "attribute value")] // We don't try to correct what's entirely for serde
-                    field: String
-                }},
-                should_fail: false,
-                error_like: None,
-                is_enum: false,
-            },
-            Test {
-                title: "concerned 'no argument for argument'",
-                input: parse_quote! {struct S {
-                    #[serde(rename)]
-                    field: String
-                }},
-                should_fail: true,
-                error_like: Some(vec!["needs argument"]),
-                is_enum: false,
-            },
-            Test {
-                title: "disallowed attribute",
-                input: parse_quote! {
-                enum Enum {
-                    #[schema(description = "This is variant 1")]
-                    Variant1,
-                }},
-                should_fail: true,
-                error_like: Some(vec!["disallowed"]),
-                is_enum: true,
-            },
-            Test {
-                title: "disallowed value",
-                input: parse_quote! {
-                struct S {
-                    #[schema(format = "int128")]
-                    number: Number
-                }},
-                should_fail: true,
-                error_like: Some(vec!["only takes one of", "float", "double"]),
-                is_enum: false,
-            },
-        ];
-
-        for test in tests {
-            let first_field_attrs = &get_fields_attrs(test.input)[0];
-
-            let r = if test.is_enum {
-                parse_enum(first_field_attrs, false)
-            } else {
-                parse_field(first_field_attrs, false)
-            };
-            println!("title: {}", test.title);
-            if test.should_fail {
-                match r {
-                    Ok(_) => panic!("test did not fail"),
-                    Err(err) => {
-                        if let Some(error_like) = test.error_like {
-                            let mut matches = false;
-                            let err = err.to_string();
-
-                            for like in error_like {
-                                matches = matches || err.contains(like)
-                            }
-                            println!("{err}");
-                            assert!(matches);
-                        }
-                    }
-                }
-            } else if let Err(err) = r {
-                panic!("test failed: {err}");
-            }
-        }
-    }
-
-    #[test]
-    fn attributes() {
-        struct Test {
-            title: &'static str,
-            input: syn::DeriveInput,
-            want: Vec<Attr>,
-        }
-
-        let tests = [
-            Test {
-                title: "basic",
-                input: parse_quote! {struct S {
-                    #[schema(description = "this is my non-negotiable field", required)]
-                    #[schema(rename = "ValuableField")]
-                    field: Classified,
-
-                    #[schema(r#type = "String")]
-                    time: Time,
-
-                    #[schema(r#type = "Number", format = "float")]
-                    number: Number
-                }},
-                want: vec![
-                    Attr {
-                        description: Some("this is my non-negotiable field".to_string()),
-                        required: Some(true),
-                        rename: Some("ValuableField".to_string()),
-                        ..Default::default()
-                    },
-                    Attr {
-                        r#type: Some("String".into()),
-                        ..Default::default()
-                    },
-                    Attr {
-                        r#type: Some("Number".into()),
-                        format: Some("float".to_string()),
-                        ..Default::default()
-                    },
-                ],
-            },
-            Test {
-                title: "serde skip - schema don't",
-                input: parse_quote! {struct S {
-                    #[schema(description = "description of field field", nullable)]
-                    #[serde(skip)]
-                    #[schema(skip = "false")]
-                    field: Nullable<i32>,
-                }},
-                want: vec![Attr {
-                    description: Some("description of field field".to_string()),
-                    skip: Some(false),
-                    nullable: Some(true),
-                    ..Default::default()
-                }],
-            },
-            Test {
-                title: "serde skip and rename",
-                input: parse_quote! {struct S {
-                    #[serde(rename = "TRUE")]
-                    #[serde(skip)]
-                    rgb: String,
-                }},
-                want: vec![Attr {
-                    rename: Some("TRUE".to_string()),
-                    skip: Some(true),
-                    ..Default::default()
-                }],
-            },
-        ];
-
-        for test in tests {
-            println!("title: {}", test.title);
-            let fields_attrs = get_fields_attrs(test.input);
-            assert_eq!(fields_attrs.len(), test.want.len());
-
-            for (ith, field_attrs) in fields_attrs.iter().enumerate() {
-                match parse_field(field_attrs, false) {
-                    Ok(attr) => assert_eq!(&attr, &test.want[ith]),
-                    Err(err) => panic!("test failed: {err}"),
-                };
-            }
-        }
-    }
-
-    fn get_fields_attrs(i: syn::DeriveInput) -> Vec<Vec<Attribute>> {
-        let mut out = Vec::new();
-
-        match i.data {
-            Data::Struct(DataStruct {
-                fields: Fields::Named(f),
-                ..
-            }) => {
-                for f in f.named {
-                    out.push(f.attrs);
-                }
-            }
-            Data::Enum(data_enum) => {
-                for v in data_enum.variants {
-                    out.push(v.attrs)
-                }
-            }
-            _ => unimplemented!("union/unnamed struct not supported"),
-        };
-
-        out
-    }
-}
-
-pub(crate) use case::{rename_all, rename_all_variants};
+pub(crate) use case::{no_rename, rename_all, rename_all_variants};
 
 mod case {
     pub(crate) static SUPPORTED: [&str; 8] = [
@@ -1032,6 +683,10 @@ mod case {
     #[allow(non_snake_case)]
     fn UPPERCASE(field_name: &str) -> String {
         field_name.to_ascii_uppercase()
+    }
+
+    pub(crate) fn no_rename(field_name: &str) -> String {
+        field_name.to_owned()
     }
 
     #[cfg(test)]

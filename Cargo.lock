@@ -143,16 +143,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "89e25b6adfb930f02d1981565a6e5d9c547ac15a96606256d3b59040e5cd4ca3"
 
 [[package]]
-name = "bean"
-version = "0.1.0"
-dependencies = [
- "google-ai-rs",
- "serde",
- "serde_json",
- "tokio",
-]
-
-[[package]]
 name = "bitflags"
 version = "2.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -343,10 +333,10 @@ checksum = "07e28edb80900c19c28f1072f2e8aeca7fa06b23cd4169cefe1af5aa3260783f"
 
 [[package]]
 name = "google-ai-rs"
-version = "0.1.1"
+version = "0.1.0"
 dependencies = [
  "base64",
- "google-ai-schema-derive",
+ "google-ai-schema-derive 0.1.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "pem",
  "prost",
  "prost-types",
@@ -363,6 +353,17 @@ dependencies = [
 [[package]]
 name = "google-ai-schema-derive"
 version = "0.1.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
+]
+
+[[package]]
+name = "google-ai-schema-derive"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0cdb6aa2aec43b5a42c375464495ce1d4d5a21d5cb014eb11f725444ce325ba7"
 dependencies = [
  "proc-macro2",
  "quote",

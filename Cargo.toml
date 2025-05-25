@@ -1,5 +1,5 @@
 [workspace]
-members = [ "bean",
+members = [
     "google-ai-rs",
     "google-ai-schema-derive"
 ]
