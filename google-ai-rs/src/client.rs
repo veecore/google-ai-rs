@@ -329,7 +329,9 @@ impl ClientBuilder {
             .map_err(|e| SetupError::new("TLS configuration", e))?
             .connect()
             .await
-            .map_err(|e| Error::Net(NetError::TransportFailure(TonicTransportError(e))))?;
+            .map_err(|e| {
+                Error::Net(NetError::TransportFailure(TonicTransportError(Box::new(e))))
+            })?;
 
         Ok(Client {
             gc: GenerativeServiceClient::new(channel.clone()),

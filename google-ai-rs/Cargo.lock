@@ -341,7 +341,7 @@ dependencies = [
  "prost-types",
  "rand",
  "rsa",
- "google-ai-schema-derive",
+ # "google-ai-schema-derive",
  "serde",
  "serde_json",
  "sha2",
@@ -930,14 +930,14 @@ dependencies = [
  "windows-sys 0.59.0",
 ]
 
-[[package]]
-name = "google-ai-schema-derive"
-version = "0.1.0"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn",
-]
+# [[package]]
+# name = "google-ai-schema-derive"
+# version = "0.1.0"
+# dependencies = [
+#  "proc-macro2",
+#  "quote",
+#  "syn",
+# ]
 
 [[package]]
 name = "security-framework"

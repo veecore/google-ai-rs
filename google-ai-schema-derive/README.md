@@ -2,121 +2,216 @@
 [![Documentation](https://docs.rs/google-ai-schema-derive/badge.svg)](https://docs.rs/google-ai-schema-derive)
 [![CI Status](https://github.com/veecore/google-ai-rs/actions/workflows/ci.yml/badge.svg)](https://github.com/veecore/google-ai-rs/actions)
 
-# Schema-Derive for Google AI (Rust)
+# 🧬 google-ai-schema-derive: Type-Safe Gemini Schemas in Rust
 
-**Type-Safe Schema Generation for Gemini API Interactions**
+**Generate bulletproof JSON schemas for Google AI with derive macros -  
+Because guessing games don't belong in production AI systems!**
 
-## Purpose-Built for Google AI
-
-### 1. Gemini Schema Compliance
-```rust
-#[derive(AsSchema, Deserialize)]
-#[schema(description = "Chemical element analysis")]
-struct ElementAnalysis {
-    #[schema(description = "Element symbol")]
-    symbol: String,
-    
-    #[schema(description = "Atomic mass with units")]
-    #[serde(rename = "atomicMass")]
-    mass: String,
-}
+```toml
+[dependencies]
+google-ai-schema-derive = "0.1.1"
 ```
-Generates JSON schemas that exactly match Gemini's API requirements:
-- Automatic `description` propagation
-- Google-specific type validations
-- Required field enforcement
 
-
-### 3. Optimized Serde Interop
-```rust
-#[derive(AsSchema, Serialize)]
-#[schema(rename_all = "kebab-case")]
-struct AnalysisRequest {
-    #[serde(rename = "inputData")] // Mirrored in schema
-    input_data: String,
-}
-```
-- Automatic alignment with Serde's `rename`/`skip`
-
-
-## Core Features
-
-### Schema Attributes
-`description` 
-`required`
-`format`
-`rename`
-`ignore_serde`
-`rename_all`
-`nullable`
-`type`
-`as_schema`
-`required`
-`skip`
-
-## Usage Example
+## ⚡️ 10-Second Schema Generation
 
 ```rust
 #[derive(AsSchema, Deserialize)]
-#[schema(rename_all = "camelCase")]
-#[schema(description = "API response structure")]
-struct GeminiResponse {
-    #[schema(description = "Confidence score 0-1")]
-    confidence: f64,
+#[schema(description = "Social media post analysis")]
+struct PostAnalysis {
+    #[schema(description = "Sentiment score (-1 to 1)")]
+    sentiment: f32,
     
-    #[schema(
-        description = "MIME type validated content",
-    )]
-    content_type: String,
+    #[schema(rename = "topics", description = "Detected topics")]
+    hashtags: Vec<String>,
 }
 
-// Automatically generates compatible schema:
+// Automatically generates Gemini-compatible schema:
 /*
 {
   "type": "object",
-  "title": "GeminiResponse",
-  "description": "API response structure",
+  "description": "Social media post analysis",
   "properties": {
-    "confidence": {
+    "sentiment": {
       "type": "number",
-      "format": "float"
-      "description": "Confidence score 0-1"
+      "format": "float",
+      "description": "Sentiment score (-1 to 1)"
     },
-    "contentType": {
-      "type": "string",
-      "description": "MIME type validated content",
+    "topics": {
+      "type": "array",
+      "items": {"type": "string"},
+      "description": "Detected topics"
     }
   },
-  "required": ["confidence", "contentType"]
+  "required": ["sentiment", "topics"]
 }
 */
 ```
 
-## Compliance Notes
+## 🚀 Why Developers Love This
 
-### Gemini-Specific Rules
-1. **Description Requirements**
+### 1. Type Safety Meets AI Magic
 ```rust
-#[derive(AsSchema)]
-struct Invalid {
-    #[schema(description = "")] // Error: Empty description
-    field: String,
+#[derive(AsSchema, Deserialize)]
+struct FinancialReport {
+    #[schema(description = "Year-over-year growth %")]
+    yoy_growth: f64,
+    
+    #[schema(
+        description = "Key performance indicators",
+        min_items = "3",
+        max_items = "5"
+    )]
+    kpis: Vec<String>,
+}
+
+// Compile-time validation:
+// - Fails if kpis has <3 or >5 items
+// - Enforces f64 type for growth
+```
+
+### 2. Serde Superpowers
+```rust
+#[derive(AsSchema, Serialize)]
+#[schema(rename_all = "camelCase")]
+struct UserProfile {
+    #[serde(rename = "fullName")] // Mirrored in schema!
+    name: String,
+    
+    #[schema(skip)] // Hidden from schema, kept in Serde
+    internal_id: Uuid,
 }
 ```
 
+### 3. Real-World AI Schemas Made Easy
+**News Article Analysis:**
+```rust
+#[derive(AsSchema, Deserialize)]
+#[schema(description = "News article metadata extraction")]
+struct ArticleMeta {
+    #[schema(description = "ISO language code")]
+    language: String,
+    
+    #[schema(
+        description = "People/organizations mentioned",
+        min_items = "1"
+    )]
+    entities: Vec<Map<HashMap<String, String>>>,
+    
+    #[schema(as_schema = "date_schema")]
+    publish_date: i64,
+}
 
-## Limitations
+fn date_schema() -> Schema {
+    Schema {
+        r#type: SchemaType::String as i32,
+        ..Default::default()
+    }
+}
+```
 
-1. **Recursive Structures**
+## 🛠️ Schema Crafting Toolkit
+
+### Core Attributes Cheat Sheet
+
+**Struct-Level Magic:**
+```rust
+#[schema(
+    description = "E-commerce product listing",
+    rename_all = "snake_case",
+    nullable   // Whole struct can be null
+)]
+struct Product {
+    // ...
+}
+```
+
+**Field-Level Control:**
+```rust
+#[schema(
+    description = "Price in USD cents",
+    r#type = "Integer",
+    format = "int64",
+    required  // Force include in required[]
+)]
+price: u64,
+
+#[schema(
+    as_schema = "custom_image_schema",  // Full override
+)]
+hero_image: Vec<u8>,
+
+#[schema(skip)] // Hide from schema
+internal_version: u32
+```
+
+### Enum Strategies
+**Simple Variants → String Enum:**
 ```rust
 #[derive(AsSchema)]
-struct Node {
-    children: Vec<Node>, // Error: Stack overflow
+enum ContentRating {
+    Safe,
+    Mature,
+    Explicit
 }
+
+// Generates: {"type": "string", "enum": ["Safe", "Mature", "Explicit"]}
+```
+
+**Complex Variants → Tagged Union:**
+```rust
+#[derive(AsSchema)]
+enum APIResponse {
+    Success { data: String },
+    Error { code: u16, message: String }
+}
+
+/*
+{
+  "type": "object",
+  "properties": {
+    "Success": { /* data schema */ },
+    "Error": { /* error schema */ }
+  }
+}
+*/
+```
+
+## 🚨 Compliance First
+
+### Enforced Best Practices
+```rust
+#[derive(AsSchema)]
+struct MedicalReport {
+    #[schema(r#type = "string", format = "float")] // COMPILE ERROR:: Type mismatch
+    probability: f32
+}
+```
+
+### Gemini-Specific Rules
+- All fields require descriptions
+- Type-format compatibility checked
+- No recursive types
+- Required fields explicit
+
+## 📦 Perfect Pairing
+
+**Works seamlessly with `google-ai-rs` main crate:**
+```rust
+use google_ai_rs::{AsSchema, TypedModel};
+
+#[derive(AsSchema, Deserialize)]
+struct LegalClause {
+    #[schema(description = "Clause text in Markdown")]
+    text: String,
+    #[schema(description = "Applicable jurisdictions")]
+    regions: Vec<String>,
+}
+
+let model = TypedModel::<LegalClause>::new(&client, "gemini-pro");
+let clause = model.generate_content("Generate GDPR data processing clause").await?;
 ```
 
 ---
 
-**Part of the Google AI Rust Toolkit**  
-
-*"Finally makes Gemini schema authoring feel like native Rust" - Library Author*
+**Ready to banish schema guesswork?**  
+`cargo add google-ai-schema-derive` and ship AI features with confidence 🚀
