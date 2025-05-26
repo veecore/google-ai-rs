@@ -242,7 +242,7 @@ impl ToTokens for Schema {
                 let mut schema = #base;
             };
 
-            // This macro should be able to simplify the code more
+            // This macro should be able to simplify the code better
             macro_rules! transfer_properties {
                 (vec, $($property:ident)*) => {{
                     $(

@@ -651,7 +651,16 @@ impl StructItem for Variant {
         {
             generate_item_schema(ctx, schema_attrs, &data_type(&self.fields))?
         } else {
-            dispatch_struct_fields(ctx, &self.fields)?
+            // these guys will think they're him and use the top attr.
+            // especially tuple_struct.
+            // FIXME: Reconsider context purity.
+
+            let original_description = ctx.top_attr.description.take();
+            let original_nullable = ctx.top_attr.nullable.take();
+            let schema = dispatch_struct_fields(ctx, &self.fields)?;
+            ctx.top_attr.description = original_description;
+            ctx.top_attr.nullable = original_nullable;
+            schema
         };
 
         // macro is tired of me by now.. lol
@@ -663,7 +672,7 @@ impl StructItem for Variant {
             }};
         }
         // We add the top attributes values to the schema
-        // if there not filled
+        // if they're not filled
         transfer_properties! {
             description nullable max_items min_items
         }
@@ -685,14 +694,7 @@ fn impl_enum(ctx: &mut Context, data: &DataEnum) -> Result<Schema, Error> {
     // check if it has data
     let has_data = data.variants.iter().any(|v| !v.fields.is_empty());
     if has_data {
-        // replace the topattr so it don't get mixed-up
-        let original_top_attr = std::mem::take(&mut ctx.top_attr);
-
-        let mut schema = named_struct_like(ctx, &data.variants, IS_ENUM)?;
-        schema.description = original_top_attr.description.clone();
-
-        ctx.top_attr = original_top_attr;
-        Ok(schema)
+        named_struct_like(ctx, &data.variants, IS_ENUM)
     } else {
         let top_attr = &ctx.top_attr;
         let rename_all = prepare_rename_all(top_attr, IS_ENUM)?;
