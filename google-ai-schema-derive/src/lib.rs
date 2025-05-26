@@ -623,8 +623,8 @@ impl StructItem for Variant {
         // This is done to support as_schema_generic
         fn data_type(data: &Fields) -> Type {
             if data.len() == 1 {
-                // don't ask
-                return data.iter().last().unwrap().ty.clone();
+                // don't ask... it's just one clippy.
+                return data.iter().next_back().unwrap().ty.clone();
             }
             // rust don't have anonymous structs so we
             // represent the struct-like data as tuple
