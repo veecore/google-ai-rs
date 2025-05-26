@@ -26,6 +26,24 @@ use crate::{
 /// - You need structured output from the model
 /// - Response schema stability is critical
 /// - You want compile-time validation of response handling
+///
+/// # Example
+/// ```
+/// use google_ai_rs::{Client, GenerativeModel, AsSchema};
+/// # async fn f() -> Result<(), Box<dyn std::error::Error>> {
+/// # let auth = "YOUR-API-KEY".into();
+/// # use std::collections::HashMap;
+///
+/// #[derive(AsSchema)]
+/// struct Recipe {
+///     name: String,
+///     ingredients: Vec<String>,
+/// }
+///
+/// let client = Client::new(auth).await?;
+/// let model = client.typed_model::<Recipe>("gemini-pro");
+/// # Ok(())
+/// # }
 #[derive(Debug)]
 pub struct TypedModel<'c, T> {
     inner: GenerativeModel<'c>,
@@ -313,6 +331,17 @@ impl<'c> GenerativeModel<'c> {
             .map(|r| r.into_inner())
     }
 
+    pub async fn typed_generate_content<I, T>(&self, contents: I) -> Result<T, Error>
+    where
+        I: TryIntoContents,
+        T: AsSchema + TryFromCandidates,
+    {
+        self.clone()
+            .to_typed()
+            .generate_content(contents)
+            .await
+    }
+
     pub async fn generate_typed_content<I, T>(&self, contents: I) -> Result<TypedResponse<T>, Error>
     where
         I: TryIntoContents,
@@ -323,6 +352,7 @@ impl<'c> GenerativeModel<'c> {
             .generate_typed_content(contents)
             .await
     }
+
     /// Generates a streaming response from flexible input
     ///
     /// # Example
@@ -619,9 +649,9 @@ pub type Response = GenerateContentResponse;
 
 impl Response {
     /// Total tokens used in request/response cycle
-    pub fn total_tokens(&self) -> i32 {
-        self.usage_metadata.as_ref().map_or(0, |meta| {
-            meta.total_token_count + meta.cached_content_token_count
+    pub fn total_tokens(&self) -> f64 {
+        self.usage_metadata.as_ref().map_or(0.0, |meta| {
+            meta.total_token_count as f64 + meta.cached_content_token_count as f64
         })
     }
 }
@@ -678,8 +708,8 @@ impl Client {
 }
 
 impl CountTokensResponse {
-    pub fn total(&self) -> i64 {
-        (self.total_tokens + self.cached_content_token_count).into()
+    pub fn total(&self) -> f64 {
+        self.total_tokens as f64 + self.cached_content_token_count as f64
     }
 }
 

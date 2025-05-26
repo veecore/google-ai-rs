@@ -156,7 +156,7 @@ struct Analysis {
     highlights: Vec<String>,
 }
 
-let analysis: Analysis = typed_model.generate_content(text).await?;
+let analysis: Analysis = model.generate_content(text).await?;
 
 // Raw response + parsed data
 let TypedResponse { t: data, raw } = model.generate_typed_content(prompt).await?;

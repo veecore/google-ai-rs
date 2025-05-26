@@ -522,8 +522,7 @@ impl<K, V> MapTrait for HashMap<K, V> {
     type Value = V;
 }
 
-// Kind of won't be able to specify the other items
-// for hashmap... maybe add feature or env
+// TODO: Other maptrait items for HashMap
 
 
 /// Internal representation of a map entry for schema generation

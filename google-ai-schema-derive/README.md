@@ -1,217 +1,197 @@
-[![crates.io](https://img.shields.io/crates/v/google-ai-schema-derive)](https://crates.io/crates/google-ai-schema-derive)
-[![Documentation](https://docs.rs/google-ai-schema-derive/badge.svg)](https://docs.rs/google-ai-schema-derive)
+[![crates.io](https://img.shields.io/crates/v/google-ai-rs)](https://crates.io/crates/google-ai-rs)
+[![Documentation](https://docs.rs/google-ai-rs/badge.svg)](https://docs.rs/google-ai-rs)
 [![CI Status](https://github.com/veecore/google-ai-rs/actions/workflows/ci.yml/badge.svg)](https://github.com/veecore/google-ai-rs/actions)
 
-# 🧬 google-ai-schema-derive: Type-Safe Gemini Schemas in Rust
+# 🌟 google_ai_rs: Type-Safe Google AI Interactions for Rustaceans
 
-**Generate bulletproof JSON schemas for Google AI with derive macros -  
-Because guessing games don't belong in production AI systems!**
+**Build AI-powered apps with Rust's type system as your guardian angel!**  
+Now with 200% more schema validation, Serde magic ✨, and content superpowers.
 
 ```toml
 [dependencies]
-google-ai-schema-derive = "0.1.1"
+google-ai-rs = { version = "0.1.1", features = ["serde"] } 
 ```
 
-## ⚡️ 10-Second Schema Generation
+## 🚀 10-Second Example: Parsed Responses FTW!
 
 ```rust
+use google_ai_rs::{Client, AsSchema, TypedModel, Map};
+use serde::Deserialize;
+use std::collections::HashMap;
+
 #[derive(AsSchema, Deserialize)]
-#[schema(description = "Social media post analysis")]
-struct PostAnalysis {
-    #[schema(description = "Sentiment score (-1 to 1)")]
-    sentiment: f32,
-    
-    #[schema(rename = "topics", description = "Detected topics")]
-    hashtags: Vec<String>,
+struct Recipe {
+    name: String,
+    ingredients: Vec<String>,
+    steps: Vec<Map<HashMap<String, String>>>,
 }
 
-// Automatically generates Gemini-compatible schema:
-/*
-{
-  "type": "object",
-  "description": "Social media post analysis",
-  "properties": {
-    "sentiment": {
-      "type": "number",
-      "format": "float",
-      "description": "Sentiment score (-1 to 1)"
-    },
-    "topics": {
-      "type": "array",
-      "items": {"type": "string"},
-      "description": "Detected topics"
-    }
-  },
-  "required": ["sentiment", "topics"]
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let client = Client::new("API_KEY".into()).await?;
+    let model = TypedModel::<Recipe>::new(&client, "gemini-2.0-pro");
+    
+    let recipe = model.generate_content(
+        "Give me a vegan lasagna recipe with rocket pesto"
+    ).await?;
+
+    println!("🌟 {} ({} ingredients)", recipe.name, recipe.ingredients.len());
+    Ok(())
 }
-*/
 ```
 
-## 🚀 Why Developers Love This
+## 🔥 Killer Features
 
-### 1. Type Safety Meets AI Magic
+### 1. Type-Safe Prompts → Structured Responses
 ```rust
 #[derive(AsSchema, Deserialize)]
 struct FinancialReport {
-    #[schema(description = "Year-over-year growth %")]
-    yoy_growth: f64,
-    
-    #[schema(
-        description = "Key performance indicators",
-        min_items = "3",
-        max_items = "5"
-    )]
-    kpis: Vec<String>,
+    quarter: String,
+    revenue: f64,
+    // Uses our special Map type for schema-compliant maps!
+    metrics: Map<HashMap<String, f64>>,
 }
 
-// Compile-time validation:
-// - Fails if kpis has <3 or >5 items
-// - Enforces f64 type for growth
+let report = model.generate_content((
+    "Generate Q2 financial report for NVIDIA",
+    "Include revenue growth and key metrics"
+)).await?;
+
+println!("Gross margin: {}", report.metrics.get("gross_margin").unwrap_or_default());
 ```
 
-### 2. Serde Superpowers
-```rust
-#[derive(AsSchema, Serialize)]
-#[schema(rename_all = "camelCase")]
-struct UserProfile {
-    #[serde(rename = "fullName")] // Mirrored in schema!
-    name: String,
-    
-    #[schema(skip)] // Hidden from schema, kept in Serde
-    internal_id: Uuid,
-}
-```
+### 2. Content Creation Supercharged
+Mix and match input types like a boss:
 
-### 3. Real-World AI Schemas Made Easy
-**News Article Analysis:**
 ```rust
-#[derive(AsSchema, Deserialize)]
-#[schema(description = "News article metadata extraction")]
-struct ArticleMeta {
-    #[schema(description = "ISO language code")]
-    language: String,
-    
-    #[schema(
-        description = "People/organizations mentioned",
-        min_items = "1"
-    )]
-    entities: Vec<Map<HashMap<String, String>>>,
-    
-    #[schema(as_schema = "date_schema")]
-    publish_date: i64,
+// Multi-part content with validation
+struct UserQuery {
+    text: String,
+    attachments: Vec<Part>,
 }
 
-fn date_schema() -> Schema {
-    Schema {
-        r#type: SchemaType::String as i32,
-        ..Default::default()
+impl TryIntoContents for UserQuery {
+    fn try_into_contents(self) -> Result<Vec<Content>, Error> {
+        let mut parts = self.text.into_parts();
+        parts.extend(self.attachments);
+        Ok(vec![Content::from(parts)])
     }
 }
+
+model.generate_content(UserQuery {
+    text: "Analyze these product shots".into(),
+    attachments: vec![
+        Part::blob("image/jpeg", product_image1),
+        Part::blob("image/jpeg", product_image2)
+    ]
+}).await?;
 ```
 
-## 🛠️ Schema Crafting Toolkit
-
-### Core Attributes Cheat Sheet
-
-**Struct-Level Magic:**
+### 3. Error Handling That Actually Helps
 ```rust
-#[schema(
-    description = "E-commerce product listing",
-    rename_all = "snake_case",
-    nullable   // Whole struct can be null
-)]
-struct Product {
-    // ...
+match model.generate_content(invalid_input).await {
+    Ok(data) => /* Happy path */,
+    Err(Error::Service(e)) => eprintln!("Model error: {}", e),
+    Err(Error::Net(e)) => retry_logic(),
+    // ... and more other error variants
 }
 ```
 
-**Field-Level Control:**
+## 🧠 Real-World Example: Fashion Analytics
+
 ```rust
-#[schema(
-    description = "Price in USD cents",
-    r#type = "Integer",
-    format = "int64",
-    required  // Force include in required[]
-)]
-price: u64,
-
-#[schema(
-    as_schema = "custom_image_schema",  // Full override
-)]
-hero_image: Vec<u8>,
-
-#[schema(skip)] // Hide from schema
-internal_version: u32
-```
-
-### Enum Strategies
-**Simple Variants → String Enum:**
-```rust
-#[derive(AsSchema)]
-enum ContentRating {
-    Safe,
-    Mature,
-    Explicit
+#[derive(AsSchema, Deserialize, PartialEq, Eq, Hash)]
+#[schema(description = "High-end fashion bag details")]
+struct FashionBag {
+    #[schema(description = "Designer brand name")]
+    brand: String,
+    #[schema(description = "Style category")]
+    style: String,
+    #[schema(description = "Primary material")]
+    material: String,
 }
 
-// Generates: {"type": "string", "enum": ["Safe", "Mature", "Explicit"]}
-```
+#[derive(AsSchemaWithSerde)]
+struct PriceInfo(
+    #[schema(description = "Price USD")] f32,
+    #[schema(description = "In stock")] bool
+);
 
-**Complex Variants → Tagged Union:**
-```rust
-#[derive(AsSchema)]
-enum APIResponse {
-    Success { data: String },
-    Error { code: u16, message: String }
-}
+// Get structured data from unstructured input!
+let model = client.typed_model::<Map<HashMap<FashionBag, PriceInfo>>>();
+let inventory = model.generate_content(
+    "List 5 luxury bags from Paris Fashion Week with prices"
+).await?;
 
-/*
-{
-  "type": "object",
-  "properties": {
-    "Success": { /* data schema */ },
-    "Error": { /* error schema */ }
-  }
-}
-*/
-```
-
-## 🚨 Compliance First
-
-### Enforced Best Practices
-```rust
-#[derive(AsSchema)]
-struct MedicalReport {
-    #[schema(r#type = "string", format = "float")] // COMPILE ERROR:: Type mismatch
-    probability: f32
+for (bag, price) in &inventory {
+    println!("{} {}: ${}", bag.brand, bag.style, price.0);
 }
 ```
 
-### Gemini-Specific Rules
-- All fields require descriptions
-- Type-format compatibility checked
-- No recursive types
-- Required fields explicit
+## 🛠️ Flexible Content Creation
 
-## 📦 Perfect Pairing
-
-**Works seamlessly with `google-ai-rs` main crate:**
+### Input Anything
 ```rust
-use google_ai_rs::{AsSchema, TypedModel};
+// Tuple of mixed types
+model.generate_content((
+    "Translate this document",
+    Part::blob("application/pdf", resume_pdf),
+    "Keep technical terms in English"
+)).await?;
 
-#[derive(AsSchema, Deserialize)]
-struct LegalClause {
-    #[schema(description = "Clause text in Markdown")]
-    text: String,
-    #[schema(description = "Applicable jurisdictions")]
-    regions: Vec<String>,
+// Automatic conversion for Vecs
+let slides = vec![
+    Part::blob("image/png", slide1),
+    Part::blob("image/png", slide2),
+];
+model.generate_content(slides).await?;
+```
+
+### Output Everything
+```rust
+// Direct deserialization
+#[derive(Deserialize)]
+struct Analysis {
+    score: f32,
+    highlights: Vec<String>,
 }
 
-let model = TypedModel::<LegalClause>::new(&client, "gemini-pro");
-let clause = model.generate_content("Generate GDPR data processing clause").await?;
+let analysis: Analysis = typed_model.generate_content(text).await?;
+
+// Raw response + parsed data
+let TypedResponse { t: data, raw } = model.generate_typed_content(prompt).await?;
+println!("Safety ratings: {:?}", raw.safety_ratings);
+```
+
+## ⚡️ Performance Meets Safety
+
+- **gRPC core** with async/await
+- **Connection pooling** out of the box
+- **Schema validation** at compile time
+
+```rust
+// Batch processing made easy
+client.batch()
+    .add_content("Doc1", text1)
+    .add_content("Doc2", text2)
+    .embed() // Get embeddings for all at once
+    .await?;
+```
+
+## 🔒 Auth That Fits Your Stack
+
+```rust
+// Simple API key
+Client::new("your-api-key".into()).await?;
+
+// Full service account
+Client::builder()
+    .timeout(Duration::from_secs(30))
+    .build(Auth::service_account("creds.json").await?)
+    .await?;
 ```
 
 ---
 
-**Ready to banish schema guesswork?**  
-`cargo add google-ai-schema-derive` and ship AI features with confidence 🚀
+**Ready to build AI features that don't keep you up at night?**  
+`cargo add google-ai-rs` and sleep better tonight 😴

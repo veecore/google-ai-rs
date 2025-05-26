@@ -543,7 +543,7 @@ impl fmt::Display for Content {
 }
 
 impl Candidate {
-    /// function_calls return all the `FunctionCall` parts in the candidate.
+    /// Returns all the `FunctionCall` parts in the candidate.
     pub fn function_calls(&self) -> Option<Vec<FunctionCall>> {
         if let Some(content) = &self.content {
             let mut out = Vec::new();

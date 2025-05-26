@@ -60,7 +60,7 @@ impl<'m> Session<'m> {
 
     /// Starts a streaming response while maintaining session state
     ///
-    /// `NOTE`: history is only added if whole message is consumed
+    /// `NOTE`: response is only added to history if whole message is consumed
     pub async fn stream_send_message<'s, T>(
         &'s mut self,
         contents: T,
@@ -108,7 +108,7 @@ impl ResponseStream<'_, '_> {
     ///
     /// # Returns
     /// Total bytes written
-    pub async fn write_to<W: Write>(&mut self, writer: &mut W) -> Result<usize, Error> {
+    pub async fn write_to<W: Write>(&mut self, dst: &mut W) -> Result<usize, Error> {
         let mut total = 0;
 
         while let Some(response) = self
@@ -117,7 +117,7 @@ impl ResponseStream<'_, '_> {
             .map_err(|e| Error::Stream(ActionError::Error(e.into())))?
         {
             let bytes = response.try_into_bytes()?;
-            let written = writer
+            let written = dst
                 .write(&bytes)
                 .map_err(|e| Error::Stream(ActionError::Action(e)))?;
             total += written;

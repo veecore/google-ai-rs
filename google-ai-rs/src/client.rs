@@ -38,7 +38,6 @@ const DEFAULT_PAGE_SIZE: i32 = 0;
 /// # Example
 /// ```
 /// use google_ai_rs::{Client, Auth};
-/// use std::time::Duration;
 ///
 /// # async fn f() -> Result<(), Box<dyn std::error::Error>> {
 /// let auth = Auth::new("your-api-key");
@@ -80,7 +79,7 @@ impl Client {
     /// Updates authentication credentials atomically
     ///
     /// Subsequent requests will use the new credentials immediately. This operation
-    /// is thread-safe and non-blocking for read operations.
+    /// is thread-safe.
     pub async fn update_auth(&self, new_auth: Auth) {
         *self.auth.write().await = new_auth;
     }
@@ -117,7 +116,7 @@ impl Client {
             .map(|r| r.into_inner())
     }
 
-    /// retrieves the `CachedContent` with the given name.
+    /// Retrieves the `CachedContent` with the given name.
     pub async fn get_cached_content(&self, name: &str) -> Result<CachedContent, Error> {
         let mut request = GetCachedContentRequest {
             name: name.to_owned(),
@@ -134,7 +133,7 @@ impl Client {
             .map(|r| r.into_inner())
     }
 
-    /// deletes the CachedContent with the given name.
+    /// Deletes the `CachedContent` with the given name.
     pub async fn delete_cached_content(&self, name: &str) -> Result<(), Error> {
         let mut request = DeleteCachedContentRequest {
             name: name.to_owned(),
@@ -151,7 +150,7 @@ impl Client {
             .map(|r| r.into_inner())
     }
 
-    /// modifies the ``CachedContent``.
+    /// Modifies the `CachedContent`.
     ///
     /// It returns the modified CachedContent.
     ///
@@ -245,7 +244,7 @@ impl Client {
             .map(|r| r.into_inner())
     }
 
-    /// deletes the `TunedModel` with the given name.
+    /// Deletes the `TunedModel` with the given name.
     pub async fn delete_tuned_model(&self, name: &str) -> Result<(), Error> {
         let mut request = DeleteTunedModelRequest {
             name: name.to_owned(),
@@ -320,8 +319,8 @@ impl ClientBuilder {
     /// * `auth` - Authentication credentials (API key or service account)
     ///
     /// # Errors
-    /// Returns [`Error::Setup`] for invalid configurations
-    /// Returns [`Error::Net`] for connection failures  
+    /// - Returns [`Error::Setup`] for invalid configurations
+    /// - Returns [`Error::Net`] for connection failures  
     pub async fn build(self, auth: Auth) -> Result<Client, Error> {
         let channel = self
             .endpoint
@@ -342,13 +341,13 @@ impl ClientBuilder {
     }
 }
 
-// /// Async iterator for paginated cached content results
+/// Async iterator for paginated cached content results
 pub type CachedContentIterator<'a> = PageIterator<'a, CachedContentPager>;
 
-// /// Async iterator for paginated models results
+/// Async iterator for paginated models results
 pub type ModelsListIterator<'a> = PageIterator<'a, ModelsListPager>;
 
-// /// Async iterator for paginated tuned models results
+/// Async iterator for paginated tuned models results
 pub type TunedModelsListIterator<'a> = PageIterator<'a, TunedModelsListPager>;
 
 /// Async iterator for paginated contents
@@ -502,3 +501,5 @@ impl Page for TunedModelsListPager {
         Ok((response.tuned_models, response.next_page_token))
     }
 }
+
+// TODO: Change clones to make_mut wrci
