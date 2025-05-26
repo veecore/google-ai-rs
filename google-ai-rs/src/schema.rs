@@ -515,7 +515,6 @@ pub trait MapTrait {
     const DESCRIPTION: Option<&str> = None;
 }
 
-
 impl<K, V> MapTrait for HashMap<K, V> {
     type Key = K;
 
@@ -523,7 +522,6 @@ impl<K, V> MapTrait for HashMap<K, V> {
 }
 
 // TODO: Other maptrait items for HashMap
-
 
 /// Internal representation of a map entry for schema generation
 ///

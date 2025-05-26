@@ -336,10 +336,7 @@ impl<'c> GenerativeModel<'c> {
         I: TryIntoContents,
         T: AsSchema + TryFromCandidates,
     {
-        self.clone()
-            .to_typed()
-            .generate_content(contents)
-            .await
+        self.clone().to_typed().generate_content(contents).await
     }
 
     pub async fn generate_typed_content<I, T>(&self, contents: I) -> Result<TypedResponse<T>, Error>
