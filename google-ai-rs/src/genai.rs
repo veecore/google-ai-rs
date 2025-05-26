@@ -404,7 +404,7 @@ impl<'c> GenerativeModel<'c> {
     /// # let model = client.generative_model("gemini-pro");
     /// # let content = "";
     /// let token_count = model.count_tokens(content).await?;
-    /// # const COST_PER_TOKEN: i64 = 1;
+    /// # const COST_PER_TOKEN: f64 = 1.0;
     /// println!("Estimated cost: ${}", token_count.total() * COST_PER_TOKEN);
     /// # Ok(())
     /// # }
