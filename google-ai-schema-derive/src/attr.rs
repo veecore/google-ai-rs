@@ -1336,10 +1336,7 @@ mod case {
             ];
 
             for test in tests {
-                assert_eq!(
-                    PascalCase::tokenize(test.0).into_iter().collect::<Vec<_>>(),
-                    test.1
-                )
+                assert_eq!(PascalCase::tokenize(test.0).collect::<Vec<_>>(), test.1)
             }
         }
 

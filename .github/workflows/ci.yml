@@ -22,11 +22,11 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
-        rust: [stable, '1.83.0']
+        rust: [stable, '1.86.0']
         include:
           - rust: stable
             profile: default
-          - rust: '1.83.0'
+          - rust: '1.86.0'
             profile: minimal
 
     steps:
