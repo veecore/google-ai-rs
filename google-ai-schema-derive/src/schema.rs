@@ -21,7 +21,7 @@ pub struct UnknownVariant;
 
 impl fmt::Debug for UnknownVariant {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str("Unknown Variant")        
+        f.write_str("Unknown Variant")
     }
 }
 
@@ -42,7 +42,7 @@ macro_rules! declare_enum_attr {
                 $variant = $r
             ),*
         }
-        
+
         impl $crate::attr::TryFromParse<syn::LitStr> for $ty {
             fn try_from_parse(parse: syn::LitStr) -> Result<Self, syn::Error> {
                 let value = parse.value();

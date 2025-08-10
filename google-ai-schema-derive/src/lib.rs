@@ -776,12 +776,10 @@ fn generate_item_schema(
     schema_attrs: &Attr,
     item_ty: &Type,
 ) -> Result<Schema, Error> {
-
     let description = schema_attrs.description.clone();
     let nullable = schema_attrs.nullable;
     let min_items = schema_attrs.min_items;
     let max_items = schema_attrs.max_items;
-
 
     if let Some(ty) = schema_attrs.r#type {
         let format = schema_attrs.format;
@@ -793,13 +791,13 @@ fn generate_item_schema(
                 let err_format = format.error(format!("`{format}` is not compatible with {ty}"));
 
                 err.combine(err_format);
-                return Err(err)
+                return Err(err);
             }
         }
 
         Ok(Schema {
             r#type: Some(ty.into_inner()),
-            format: format.map(|c|c.into_inner()),
+            format: format.map(|c| c.into_inner()),
             description,
             nullable,
             max_items,
@@ -858,7 +856,7 @@ enum RenameAll {
 }
 
 fn rename_item(rename_all: Option<&RenameAll>, item_name: &str, item_attr: &Attr) -> Value<String> {
-    // Apply the rename attribute on the item or fallback to the cont_attr rename_all or the original name 
+    // Apply the rename attribute on the item or fallback to the cont_attr rename_all or the original name
     macro_rules! or_rename {
         ($f:expr) => {
             if let Some(ref rename) = item_attr.rename {

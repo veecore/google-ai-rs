@@ -22,7 +22,6 @@
 
 use std::{
     fmt::{Debug, Display, Write as _},
-    ops::Deref,
     str::FromStr,
 };
 
@@ -152,34 +151,6 @@ pub(crate) fn parse_top(attrs: &[Attribute]) -> Result<TopAttr, Error> {
         nullable,
         ignore_serde,
     })
-}
-
-pub(crate) struct LitStr(syn::LitStr);
-
-impl Debug for LitStr {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(&self.0.value())
-    }
-}
-
-impl PartialEq for LitStr {
-    fn eq(&self, other: &Self) -> bool {
-        self.0.value() == other.0.value()
-    }
-}
-
-impl From<&str> for LitStr {
-    fn from(value: &str) -> Self {
-        Self(syn::LitStr::new(value, Span::call_site()))
-    }
-}
-
-impl Deref for LitStr {
-    type Target = syn::LitStr;
-
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
 }
 
 #[derive(Debug, Default, PartialEq)]
@@ -325,12 +296,6 @@ impl TryFromParse<syn::LitStr> for syn::Path {
 impl TryFromParse<syn::LitInt> for i64 {
     fn try_from_parse(parse: syn::LitInt) -> Result<Self, Error> {
         parse.base10_parse()
-    }
-}
-
-impl TryFromParse<syn::LitStr> for LitStr {
-    fn try_from_parse(parse: syn::LitStr) -> Result<Self, Error> {
-        Ok(LitStr(parse))
     }
 }
 
@@ -484,7 +449,7 @@ fn new_attr_string_concat(
                 } else {
                     Some(format!("{former}{new}"))
                 }
-            },
+            }
             _ => None,
         })
     }

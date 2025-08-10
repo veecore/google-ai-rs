@@ -9,9 +9,7 @@ use syn::{
     PredicateLifetime, TraitBound, TypeParamBound, WherePredicate,
 };
 
-use crate::{
-    attr::SetAttr, Schema, SchemaImpl
-};
+use crate::{attr::SetAttr, Schema, SchemaImpl};
 
 macro_rules! r#try {
     ($expr:expr) => {
@@ -89,7 +87,6 @@ struct Context {
 
 impl Context {
     fn new(input: DeriveInput) -> Result<Self, Error> {
-
         let inner = crate::Context::new(input)?;
 
         let serde_path = SetAttr::find_serde_crate(&inner.input.attrs)?;
