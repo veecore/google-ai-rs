@@ -2,104 +2,119 @@
 [![Documentation](https://docs.rs/google-ai-rs/badge.svg)](https://docs.rs/google-ai-rs)
 [![CI Status](https://github.com/veecore/google-ai-rs/actions/workflows/ci.yml/badge.svg)](https://github.com/veecore/google-ai-rs/actions)
 
-# 🌟 google_ai_rs: Type-Safe Google AI Interactions for Rustaceans
+# 🌟 `google_ai_rs`: The Type-Safe Generative AI Client for Rust
 
-**Build AI-powered apps with Rust's type system as your guardian angel!**  
-Now with 200% more schema validation, Serde magic ✨, and content superpowers.
+**A Rust client for Google's Generative AI, built with a focus on type-safety, performance, and developer ergonomics.**
+This crate combines a minimal footprint with powerful, **type-safe APIs**, making it ideal for everything from hobby projects to high-performance applications.
 
 ```toml
 [dependencies]
-google-ai-rs = { version = "0.1.1", features = ["serde"] } 
-```
+google-ai-rs = { version = "0.1.2", features = ["serde", "tls-native-roots"] }
+````
 
-## 🚀 10-Second Example: Parsed Responses FTW!
+## 🚀 10-Second Example: Chatbot 💬
+
+Engage in an interactive, stateful conversation with a simple chat session.
 
 ```rust
-use google_ai_rs::{Client, AsSchema, TypedModel, Map};
-use serde::Deserialize;
-use std::collections::HashMap;
-
-#[derive(AsSchema, Deserialize)]
-struct Recipe {
-    name: String,
-    ingredients: Vec<String>,
-    steps: Vec<Map<HashMap<String, String>>>,
-}
+use google_ai_rs::Client;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let client = Client::new("API_KEY".into()).await?;
-    let model = TypedModel::<Recipe>::new(&client, "gemini-2.0-pro");
-    
-    let recipe = model.generate_content(
-        "Give me a vegan lasagna recipe with rocket pesto"
-    ).await?;
+    let client = Client::new("YOUR_API_KEY").await?;
+    let model = client.generative_model("gemini-1.5-flash");
+    let mut chat = model.start_chat();
 
-    println!("🌟 {} ({} ingredients)", recipe.name, recipe.ingredients.len());
+    println!("🤖 Hello! What can I help you with today?");
+
+    let user_message = "What's the best way to get started with Rust?";
+    println!("👤 {}", user_message);
+    
+    // Send a message and get a response
+    let response = chat.send_message(user_message).await?;
+    
+    let model_response = response.text();
+    println!("🤖 {}", model_response);
+
+    // Continue the conversation
+    let user_message_2 = "Can you show me a simple 'Hello, World!' example?";
+    println!("👤 {}", user_message_2);
+    let response_2 = chat.send_message(user_message_2).await?;
+    
+    println!("🤖 {}", response_2.text());
+
     Ok(())
 }
 ```
 
-## 🔥 Killer Features
+## 🧠 Model Configuration and Builders
 
-### 1. Type-Safe Prompts → Structured Responses
-```rust
-#[derive(AsSchema, Deserialize)]
-struct FinancialReport {
-    quarter: String,
-    revenue: f64,
-    // Uses our special Map type for schema-compliant maps!
-    metrics: Map<HashMap<String, f64>>,
-}
-
-let report = model.generate_content((
-    "Generate Q2 financial report for NVIDIA",
-    "Include revenue growth and key metrics"
-)).await?;
-
-println!("Gross margin: {}", report.metrics.get("gross_margin").unwrap_or_default());
-```
-
-### 2. Content Creation Supercharged
-Mix and match input types like a boss:
+Customize your generative model with a fluent builder pattern.
+Chain methods to set safety settings, generation parameters, tools, and more.
 
 ```rust
-// Multi-part content with validation
-struct UserQuery {
-    text: String,
-    attachments: Vec<Part>,
-}
+use google_ai_rs::{
+    genai::{HarmBlockThreshold, HarmCategory, SafetySetting},
+    Client,
+};
 
-impl TryIntoContents for UserQuery {
-    fn try_into_contents(self) -> Result<Vec<Content>, Error> {
-        let mut parts = self.text.into_parts();
-        parts.extend(self.attachments);
-        Ok(vec![Content::from(parts)])
-    }
-}
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let client = Client::new("YOUR_API_KEY").await?;
 
-model.generate_content(UserQuery {
-    text: "Analyze these product shots".into(),
-    attachments: vec![
-        Part::blob("image/jpeg", product_image1),
-        Part::blob("image/jpeg", product_image2)
-    ]
-}).await?;
-```
+    let model = client
+        .generative_model("gemini-1.5-flash")
+        // Control creativity with temperature
+        .temperature(0.9)
+        // Ensure a predictable and safe response
+        .top_k(10)
+        // Add custom safety settings
+        .safety_settings([
+            SafetySetting::new()
+                .harm_category(HarmCategory::HateSpeech)
+                .harm_threshold(HarmBlockThreshold::BlockOnlyHigh),
+            SafetySetting::new()
+                .harm_category(HarmCategory::Harassment)
+                .harm_threshold(HarmBlockThreshold::BlockMediumAndAbove),
+        ]);
 
-### 3. Error Handling That Actually Helps
-```rust
-match model.generate_content(invalid_input).await {
-    Ok(data) => /* Happy path */,
-    Err(Error::Service(e)) => eprintln!("Model error: {}", e),
-    Err(Error::Net(e)) => retry_logic(),
-    // ... and more other error variants
+    // Use the configured model
+    let response = model.generate_content("Tell me a story.").await?;
+    println!("{}", response.text());
+
+    Ok(())
 }
 ```
 
-## 🧠 Real-World Example: Fashion Analytics
+-----
+
+## 🔥 Key Features
+
+  - **Blazing Fast**: Optimized for minimal overhead. At just **152 bytes** for the core `Client` struct, we've minimized heap allocations and unnecessary dependencies.
+  - **Type-Safe Schemas**: Define your response schema using plain Rust structs with the `AsSchema` derive macro. The API ensures you get back exactly what you expect.
+  - **Flexible Content**: Send text, images, or a combination of both with a simple, ergonomic API.
+  - **Configurable Client**: Control TLS backends, authentication methods, and more with a granular feature flag system.
+  - **Chat Session Management**: The `Session` struct handles conversation history and state, making it easy to build interactive chatbots.
+  - **Streaming Support**: Get real-time responses with `stream_send_message`, perfect for building responsive UIs.
+
+## 🛠️ Detailed Examples
+
+### 1\. Type-Safe Response Parsing with `Map` and `AsSchema`
+
+The `AsSchema` derive macro, combined with `TypedModel`, gives you fully structured responses with compile-time checks. The `Map` and `Tuple` wrappers allow you to represent non-native Google schema types in a type-safe way.
 
 ```rust
+use google_ai_rs::{AsSchema, AsSchemaWithSerde, Client, Map};
+use serde::Deserialize;
+use std::collections::HashMap;
+
+#[derive(AsSchemaWithSerde)]
+#[schema(description = "A product's price and availability")]
+struct PriceInfo(
+    #[schema(description = "Price in USD")] f32,
+    #[schema(description = "In stock")] bool,
+);
+
 #[derive(AsSchema, Deserialize, PartialEq, Eq, Hash)]
 #[schema(description = "High-end fashion bag details")]
 struct FashionBag {
@@ -111,84 +126,125 @@ struct FashionBag {
     material: String,
 }
 
-#[derive(AsSchemaWithSerde)]
-struct PriceInfo(
-    #[schema(description = "Price USD")] f32,
-    #[schema(description = "In stock")] bool
-);
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let client = Client::new("YOUR_API_KEY").await?;
 
-// Get structured data from unstructured input!
-let model = client.typed_model::<Map<HashMap<FashionBag, PriceInfo>>>();
-let inventory = model.generate_content(
-    "List 5 luxury bags from Paris Fashion Week with prices"
-).await?;
+    // Use Map to handle a HashMap, which is not natively supported by the API
+    let model = client.typed_model::<Map<HashMap<FashionBag, PriceInfo>>>("gemini-1.5-flash");
 
-for (bag, price) in &inventory {
-    println!("{} {}: ${}", bag.brand, bag.style, price.0);
+    let inventory = model
+        .generate_content(
+            "List 5 luxury bags from Paris Fashion Week with prices and availability.",
+        )
+        .await?;
+
+    for (bag, price) in &inventory {
+        println!(
+            "{} {}: ${} (in stock: {})",
+            bag.brand, bag.style, price.0, price.1
+        );
+    }
+    Ok(())
 }
 ```
 
-## 🛠️ Flexible Content Creation
+### 2\. Multi-modal and `TryIntoContents` Input
 
-### Input Anything
+Easily combine text, images, or other parts in a single prompt. This example shows how to implement `TryIntoContents` for a custom struct to provide clean, validated input.
+
 ```rust
-// Tuple of mixed types
-model.generate_content((
-    "Translate this document",
-    Part::blob("application/pdf", resume_pdf),
-    "Keep technical terms in English"
-)).await?;
+use google_ai_rs::{Client, Part, Error, content::TryIntoContents, Content};
 
-// Automatic conversion for Vecs
-let slides = vec![
-    Part::blob("image/png", slide1),
-    Part::blob("image/png", slide2),
-];
-model.generate_content(slides).await?;
-```
-
-### Output Everything
-```rust
-// Direct deserialization
-#[derive(Deserialize)]
-struct Analysis {
-    score: f32,
-    highlights: Vec<String>,
+struct UserQuery {
+    text: String,
+    attachments: Vec<Part>,
 }
 
-let analysis: Analysis = model.generate_content(text).await?;
+impl TryIntoContents for UserQuery {
+    fn try_into_contents(self) -> Result<Vec<Content>, Error> {
+        let mut parts = vec![Part::from(self.text)];
+        parts.extend(self.attachments);
+        
+        Ok(vec![Content {
+            role: "user".to_string(),
+            parts,
+        }])
+    }
+}
 
-// Raw response + parsed data
-let TypedResponse { t: data, raw } = model.generate_typed_content(prompt).await?;
-println!("Safety ratings: {:?}", raw.safety_ratings);
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let client = Client::new("YOUR_API_KEY").await?;
+    let model = client.generative_model("gemini-1.5-flash");
+    
+    // Load image data from disk
+    let product_image = std::fs::read("path/to/product.jpg")?;
+
+    let user_query = UserQuery {
+        text: "Analyze this product shot for defects".into(),
+        attachments: vec![Part::blob("image/jpeg", product_image)],
+    };
+    
+    let response = model.generate_content(user_query).await?;
+    println!("{}", response.text());
+    
+    Ok(())
+}
 ```
 
-## ⚡️ Performance Meets Safety
+### 3\. Text & Multi-modal Embeddings
 
-- **gRPC core** with async/await
-- **Connection pooling** out of the box
-- **Schema validation** at compile time
+Generate vector embeddings for single or multiple pieces of content. This is essential for building semantic search, clustering, or RAG (Retrieval-Augmented Generation) systems.
 
 ```rust
-// Batch processing made easy
-client.batch()
-    .add_content("Doc1", text1)
-    .add_content("Doc2", text2)
-    .embed() // Get embeddings for all at once
-    .await?;
-```
+use google_ai_rs::{Client, Part};
 
-## 🔒 Auth That Fits Your Stack
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let client = Client::new("YOUR_API_KEY").await?;
+    let embedding_model = client.embedding_model("embedding-001");
 
-```rust
-// Simple API key
-Client::new("your-api-key".into()).await?;
+    // Single text embedding
+    let text_embedding = embedding_model.embed_content("Hello, world!").await?;
+    println!(
+        "Text embedding: {} dimensions",
+        text_embedding.embedding.unwrap().values.len()
+    );
 
-// Full service account
-Client::builder()
-    .timeout(Duration::from_secs(30))
-    .build(Auth::service_account("creds.json").await?)
-    .await?;
+    // Multi-modal content embedding
+    let image_data = std::fs::read("path/to/my_image.jpg")?;
+    let multi_modal_embedding = embedding_model
+        .embed_content((
+            "A description of the image content",
+            Part::blob("image/jpeg", image_data),
+        ))
+        .await?;
+    println!(
+        "Multi-modal embedding: {} dimensions",
+        multi_modal_embedding.embedding.unwrap().values.len()
+    );
+
+    // Batch embeddings for efficiency
+    let documents = vec!["First document.", "Second document.", "Third document."];
+    let batch_response = embedding_model
+        .new_batch()
+        .add_content("Query for documents")
+        .add_content_with_title("Doc1", documents[0])
+        .add_content_with_title("Doc2", documents[1])
+        .embed()
+        .await?;
+
+    for (i, embedding) in batch_response.embeddings.iter().enumerate() {
+        println!(
+            "Embedding for item {}: {} dimensions",
+            i + 1,
+            embedding.values.len()
+        );
+    }
+
+    Ok(())
+}
 ```
 
 ---

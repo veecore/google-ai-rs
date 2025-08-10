@@ -1,5 +1,7 @@
 use std::{collections::HashMap, io::Write};
 
+use tokio::io::AsyncWrite;
+
 use crate::{
     content::TryIntoContents,
     error::{ActionError, Error, ServiceError},
@@ -13,7 +15,7 @@ use crate::{
 /// ```
 /// # use google_ai_rs::{Client, GenerativeModel};
 /// # async fn f() -> Result<(), Box<dyn std::error::Error>> {
-/// # let auth = "YOUR-API-KEY".into();
+/// # let auth = "YOUR-API-KEY";
 /// let client = Client::new(auth).await?;
 /// let model = client.generative_model("gemini-1.5-pro");
 /// let mut chat = model.start_chat();
@@ -119,6 +121,34 @@ impl ResponseStream<'_, '_> {
             let bytes = response.try_into_bytes()?;
             let written = dst
                 .write(&bytes)
+                .map_err(|e| Error::Stream(ActionError::Action(e)))?;
+            total += written;
+        }
+
+        Ok(total)
+    }
+
+    /// Streams content chunks to any `AsyncWrite` implementer
+    ///
+    /// # Returns
+    /// Total bytes written
+    pub async fn write_to_sync<W: AsyncWrite + std::marker::Unpin>(
+        &mut self,
+        dst: &mut W,
+    ) -> Result<usize, Error> {
+        use tokio::io::AsyncWriteExt;
+
+        let mut total = 0;
+
+        while let Some(response) = self
+            .next()
+            .await
+            .map_err(|e| Error::Stream(ActionError::Error(e.into())))?
+        {
+            let bytes = response.try_into_bytes()?;
+            let written = dst
+                .write(&bytes)
+                .await
                 .map_err(|e| Error::Stream(ActionError::Action(e)))?;
             total += written;
         }

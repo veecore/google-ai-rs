@@ -1,28 +1,59 @@
+#![allow(unused_imports)]
+#![deny(clippy::future_not_send)]
+
 //! Rust client for Google's Generative AI APIs
 //!
-//! Provides a type-safe, ergonomic interface for interacting with Google's AI services
-//! including Gemini. Features comprehensive API coverage with compile-time schema
-//! validation and async/await support.
+//! Provides a highly ergonomic, type-safe, and performant interface for
+//! interacting with Google's Generative AI services, including Gemini.
 //!
-//! ## Highlights
-//! - **Type-Safe API Interactions**: Generated from official Google discovery documents
-//! - **Multi-modal Support**: Text, images, and structured data in single requests
-//! - **Production-Ready**: Connection pooling, retries, and comprehensive error handling
+//! ## 💡 Highlights
+//! - **Minimal Overhead**: The core `Client` is highly optimized, with a small memory footprint and
+//!   minimal heap allocations.
+//! - **Configurable**: Use optional features to enable TLS backends, JWT authentication,
+//!   or reduce dependencies.
+//! - **Fluent API**: Builder patterns allow for easy configuration of `GenerativeModel`
+//!   parameters like temperature, safety settings, and tools.
+//! - **Type-Safe Schemas**: Define your expected response structure with the `AsSchema`
+//!   derive macro, ensuring compile-time validation and seamless deserialization.
+//! - **Stateful Chat Sessions**: The `Session` struct simplifies building chatbots by
+//!   managing conversation history automatically.
 //!
 //! ## Quickstart
+//!
+//! A simple example of starting a chat session and streaming a response to the console.
+//!
 //! ```rust,no_run
 //! use google_ai_rs::{Client, GenerativeModel};
+//! use std::io::{stdout, Write};
+//! use tokio::io::AsyncWriteExt;
 //!
 //! #[tokio::main]
 //! async fn main() -> Result<(), Box<dyn std::error::Error>> {
-//!     let client = Client::new("API_KEY".into()).await?;
-//!     let model = client.generative_model("gemini-pro");
+//!     // Authenticate the client with an API key
+//!     let client = Client::new("YOUR_API_KEY").await?;
+//!     let model = client.generative_model("gemini-1.5-pro");
 //!     
-//!     let response = model.generate_content(
-//!         "Explain quantum physics using pirate metaphors"
-//!     ).await?;
+//!     // Start an interactive chat session
+//!     let mut chat = model.start_chat();
 //!     
-//!     println!("{}", response.text());
+//!     println!("🤖 Initializing chat session...");
+//!     print!("👤 ");
+//!     
+//!     // Create a multi-part prompt
+//!     let prompt = "Explain the concept of 'Zero-shot learning' using a simple analogy.";
+//!     
+//!     // Stream the response and print it to the terminal
+//!     let mut stream = chat.stream_send_message(prompt).await?;
+//!     
+//!     print!("🤖 ");
+//!     // Simulate typing indicator
+//!     let _ = stdout().flush();
+//!     
+//!     // Use the `write_to_sync` method to write the streamed response
+//!     // to an async writer like `tokio::io::stdout()`
+//!     stream.write_to_sync(&mut tokio::io::stdout()).await?;
+//!     
+//!     println!();
 //!     Ok(())
 //! }
 //! ```
@@ -38,7 +69,7 @@ pub mod error;
 pub mod genai;
 pub mod schema;
 pub use auth::Auth;
-pub use client::Client;
+pub use client::{Client, SharedClient};
 pub use error::Error;
 pub use genai::{GenerativeModel, TypedModel, TypedResponse};
 
@@ -66,11 +97,11 @@ pub mod proto;
 /// Formats model names to full resource path format
 ///
 /// Ensures model names follow `models/{model}` format.
-fn full_model_name(name: &str) -> String {
+fn full_model_name(name: &str) -> std::borrow::Cow<'_, str> {
     if name.contains('/') {
         name.into()
     } else {
-        format!("models/{name}")
+        format!("models/{name}").into()
     }
 }
 

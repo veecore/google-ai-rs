@@ -35,10 +35,11 @@
 /// # Implementations
 /// - `IntoContents`
 pub trait TryIntoContents {
-    /// Convert to content items, validating input if needed    
+    /// Convert to content items, validating input if needed
     fn try_into_contents(self) -> Result<Vec<Content>, Error>;
 
     /// Create cached content targeting a specific AI model
+    #[inline]
     fn try_into_cached_content_for(self, model_name: &str) -> Result<CachedContent, Error>
     where
         Self: Sized,
@@ -49,6 +50,7 @@ pub trait TryIntoContents {
 }
 
 impl<T: IntoContents> TryIntoContents for T {
+    #[inline]
     fn try_into_contents(self) -> Result<Vec<Content>, Error> {
         Ok(self.into_contents())
     }
@@ -81,6 +83,7 @@ pub trait TryIntoContent {
 }
 
 impl<T: IntoContent> TryIntoContent for T {
+    #[inline]
     fn try_into_content(self) -> Result<Content, Error> {
         Ok(self.into_content())
     }
@@ -102,12 +105,13 @@ pub trait IntoContents: sealed::Sealed {
     fn into_contents(self) -> Vec<Content>;
 
     /// Create cached content targeting a specific model
+    #[inline]
     fn into_cached_content_for(self, model_name: &str) -> CachedContent
     where
         Self: Sized,
     {
         CachedContent {
-            model: Some(full_model_name(model_name).to_owned()),
+            model: Some(full_model_name(model_name).into()),
             contents: self.into_contents(),
             ..Default::default()
         }
@@ -115,12 +119,14 @@ pub trait IntoContents: sealed::Sealed {
 }
 
 impl IntoContents for Vec<Content> {
+    #[inline(always)]
     fn into_contents(self) -> Vec<Content> {
         self
     }
 }
 
 impl<T: IntoContent> IntoContents for T {
+    #[inline]
     fn into_contents(self) -> Vec<Content> {
         vec![self.into_content()]
     }
@@ -146,12 +152,14 @@ pub trait IntoContent: sealed::Sealed {
 }
 
 impl IntoContent for Content {
+    #[inline(always)]
     fn into_content(self) -> Content {
         self
     }
 }
 
 impl<T: IntoParts> IntoContent for T {
+    #[inline]
     fn into_content(self) -> Content {
         self.into()
     }
@@ -188,24 +196,58 @@ pub trait IntoParts: sealed::Sealed {
 }
 
 impl IntoParts for &str {
+    #[inline]
     fn into_parts(self) -> Vec<Part> {
         vec![self.into()]
     }
 }
 
 impl IntoParts for String {
+    #[inline]
     fn into_parts(self) -> Vec<Part> {
         vec![self.into()]
     }
 }
 
 impl IntoParts for Part {
+    #[inline]
     fn into_parts(self) -> Vec<Part> {
         vec![self]
     }
 }
 
+impl IntoParts for FunctionCall {
+    #[inline]
+    fn into_parts(self) -> Vec<Part> {
+        Part {
+            data: Some(Data::FunctionCall(self)),
+        }
+        .into_parts()
+    }
+}
+
+impl IntoParts for Blob {
+    #[inline]
+    fn into_parts(self) -> Vec<Part> {
+        Part {
+            data: Some(Data::InlineData(self)),
+        }
+        .into_parts()
+    }
+}
+
+impl IntoParts for FileData {
+    #[inline]
+    fn into_parts(self) -> Vec<Part> {
+        Part {
+            data: Some(Data::FileData(self)),
+        }
+        .into_parts()
+    }
+}
+
 impl<T: IntoParts> IntoParts for Vec<T> {
+    #[inline]
     fn into_parts(self) -> Vec<Part> {
         let mut out = Vec::new();
         for part in self {
@@ -216,6 +258,7 @@ impl<T: IntoParts> IntoParts for Vec<T> {
 }
 
 impl<T: IntoParts, const N: usize> IntoParts for [T; N] {
+    #[inline]
     fn into_parts(self) -> Vec<Part> {
         let mut out = Vec::new();
         for part in self {
@@ -291,6 +334,12 @@ into_parts_for_tuple! {
 ///
 /// # Implementations
 /// - [`TryFromContents`]
+#[cfg_attr(
+    not(no_diagnostic_namespace),
+    diagnostic::on_unimplemented(
+        note = "enable the `serde` feature to get a free implementation for types that implement serde::DeserializeOwned"
+    )
+)]
 pub trait TryFromCandidates: Sized {
     /// Attempt to parse from multiple response candidates
     ///
@@ -352,6 +401,12 @@ pub trait TryFromCandidates: Sized {
 ///     }
 /// }
 /// ```
+#[cfg_attr(
+    not(no_diagnostic_namespace),
+    diagnostic::on_unimplemented(
+        note = "enable the `serde` feature to get a free implementation for types that implement serde::DeserializeOwned"
+    )
+)]
 pub trait TryFromContents: Sized {
     /// Parses the response contents into a concrete type.
     ///
@@ -363,7 +418,9 @@ pub trait TryFromContents: Sized {
     /// The default serde implementation expects exactly one JSON-formatted text part.
     fn try_from_contents<'a, I: Iterator<Item = &'a Content>>(contents: I) -> Result<Self, Error>;
 }
+
 impl<T: TryFromContents> TryFromCandidates for T {
+    #[inline]
     fn try_from_candidates(candidates: &[Candidate]) -> Result<Self, Error> {
         let contents = candidates.iter().filter_map(|c| c.content.as_ref());
 
@@ -384,6 +441,7 @@ mod serde_support {
     ///
     /// returns ['ServiceError::InvalidResponse`] on invalid json
     impl<T: DeserializeOwned> TryFromContents for T {
+        #[inline]
         fn try_from_contents<'a, I>(contents: I) -> Result<Self, Error>
         where
             I: Iterator<Item = &'a Content>,
@@ -404,7 +462,7 @@ mod serde_support {
 // Content construction utilities
 impl Part {
     /// Creates a text content part
-    pub fn text(text: &str) -> Self {
+    pub fn text(text: impl Into<String>) -> Self {
         Self {
             data: Some(Data::Text(text.into())),
         }
@@ -491,6 +549,7 @@ impl Content {
     ///     Part::blob("image/png", vec![0u8; 1024])
     /// ));
     /// ```
+    #[inline]
     pub fn new<I: IntoParts>(parts: I) -> Self {
         Self {
             role: "user".into(),
@@ -565,6 +624,7 @@ impl Candidate {
 impl Response {
     /// Serializes successful content text parts to String without consuming
     /// the response
+    #[inline]
     pub fn to_text(&self) -> String {
         String::from_utf8(
             self.try_to_bytes_with(|d| match d {

@@ -3,20 +3,21 @@ use std::{
     io::Write,
     ops::{Deref, DerefMut},
 };
+use tokio::io::AsyncWrite;
 use tonic::{IntoRequest, Streaming};
 
 use crate::{
-    client::Client,
+    client::{CClient, Client, SharedClient},
     content::{IntoContent, TryFromCandidates, TryIntoContents},
     error::{status_into_error, ActionError, Error},
     full_model_name,
-    proto::{
-        CachedContent, Content as ContentP, CountTokensRequest, CountTokensResponse,
-        GenerateContentRequest, GenerateContentResponse, GenerationConfig as GenerationConfigP,
-        Model, SafetySetting as SafetySettingP, Schema, Tool as ToolP, ToolConfig as ToolConfigP,
-        TunedModel,
-    },
     schema::AsSchema,
+};
+
+pub use crate::proto::{
+    safety_setting::HarmBlockThreshold, CachedContent, Content, CountTokensRequest,
+    CountTokensResponse, GenerateContentRequest, GenerateContentResponse, GenerationConfig,
+    HarmCategory, Model, SafetySetting, Schema, Tool, ToolConfig, TunedModel,
 };
 
 /// Type-safe wrapper for [`GenerativeModel`] guaranteeing response type `T`.
@@ -31,7 +32,7 @@ use crate::{
 /// ```
 /// use google_ai_rs::{Client, GenerativeModel, AsSchema};
 /// # async fn f() -> Result<(), Box<dyn std::error::Error>> {
-/// # let auth = "YOUR-API-KEY".into();
+/// # let auth = "YOUR-API-KEY";
 /// # use std::collections::HashMap;
 ///
 /// #[derive(AsSchema)]
@@ -44,10 +45,24 @@ use crate::{
 /// let model = client.typed_model::<Recipe>("gemini-pro");
 /// # Ok(())
 /// # }
-#[derive(Debug)]
 pub struct TypedModel<'c, T> {
     inner: GenerativeModel<'c>,
-    _marker: std::marker::PhantomData<T>,
+    _marker: PhantomInvariant<T>,
+}
+
+impl<T> Debug for TypedModel<'_, T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.inner.fmt(f)
+    }
+}
+
+// std is unstable
+struct PhantomInvariant<T>(std::marker::PhantomData<fn(T) -> T>);
+
+impl<T> From<std::marker::PhantomData<T>> for PhantomInvariant<T> {
+    fn from(_value: std::marker::PhantomData<T>) -> Self {
+        Self(std::marker::PhantomData)
+    }
 }
 
 impl<'c, T> TypedModel<'c, T>
@@ -63,7 +78,15 @@ where
         let inner = GenerativeModel::new(client, name).as_response_schema::<T>();
         Self {
             inner,
-            _marker: std::marker::PhantomData,
+            _marker: PhantomInvariant(std::marker::PhantomData),
+        }
+    }
+
+    fn new_inner(client: impl Into<CClient<'c>>, name: &str) -> Self {
+        let inner = GenerativeModel::new_inner(client, name).as_response_schema::<T>();
+        Self {
+            inner,
+            _marker: PhantomInvariant(std::marker::PhantomData),
         }
     }
 
@@ -72,11 +95,11 @@ where
     /// Returns both parsed content and raw API response.
     ///
     /// # Example
-    /// ```
+    /// ```rust,ignore
     /// # use google_ai_rs::{AsSchema, Client, TypedModel, TypedResponse};
     /// # #[derive(AsSchema, serde::Deserialize, Debug)] struct StockAnalysis;
     /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
-    /// # let client = Client::new("api-key".into()).await?;
+    /// # let client = Client::new("api-key").await?;
     /// let model = TypedModel::<StockAnalysis>::new(&client, "gemini-pro");
     /// let analysis: TypedResponse<StockAnalysis> = model.generate_typed_content((
     ///     "Analyze NVDA stock performance",
@@ -85,10 +108,11 @@ where
     /// println!("Analysis: {:?}", analysis);
     /// # Ok(()) }
     /// ```
+    #[inline]
     pub async fn generate_typed_content<I>(&self, contents: I) -> Result<TypedResponse<T>, Error>
     where
-        I: TryIntoContents,
-        T: TryFromCandidates,
+        I: TryIntoContents + Send,
+        T: TryFromCandidates + Send,
     {
         let response = self.inner.generate_content(contents).await?;
         let t = T::try_from_candidates(&response.candidates)?;
@@ -107,7 +131,7 @@ where
     /// let the library handle parsing.
     ///
     /// # Example: Simple JSON Response
-    /// ```
+    /// ```rust,ignore
     /// # use google_ai_rs::{AsSchema, Client, TypedModel};
     /// # use serde::Deserialize;
     /// #[derive(AsSchema, Deserialize)]
@@ -128,7 +152,7 @@ where
     /// ```
     ///
     /// # Example: Multi-part Input
-    /// ```
+    /// ```rust,ignore
     /// # use google_ai_rs::{AsSchema, Client, TypedModel, Part};
     /// # use serde::Deserialize;
     /// #[derive(AsSchema, Deserialize)]
@@ -151,10 +175,11 @@ where
     /// - [`Error::InvalidArgument`] if input validation fails
     /// - [`Error::Service`] for model errors
     /// - [`Error::Net`] for network failures
+    #[inline]
     pub async fn generate_content<I>(&self, contents: I) -> Result<T, Error>
     where
-        I: TryIntoContents,
-        T: TryFromCandidates,
+        I: TryIntoContents + Send,
+        T: TryFromCandidates + Send,
     {
         let response = self.inner.generate_content(contents).await?;
         let t = T::try_from_candidates(&response.candidates)?;
@@ -178,7 +203,7 @@ where
         let inner = value.as_response_schema::<T>();
         TypedModel {
             inner,
-            _marker: std::marker::PhantomData,
+            _marker: PhantomInvariant(std::marker::PhantomData),
         }
     }
 }
@@ -216,13 +241,6 @@ impl<T> DerefMut for TypedResponse<T> {
     }
 }
 
-/// Type aliases for protocol buffer types to simplify API surface
-type Content = ContentP;
-type Tool = ToolP;
-type ToolConfig = ToolConfigP;
-type SafetySetting = SafetySettingP;
-type GenerationConfig = GenerationConfigP;
-
 /// Configured interface for a specific generative AI model
 ///
 /// # Example
@@ -230,7 +248,7 @@ type GenerationConfig = GenerationConfigP;
 /// use google_ai_rs::{Client, GenerativeModel};
 ///
 /// # async fn f() -> Result<(), Box<dyn std::error::Error>> {
-/// # let auth = "YOUR-API-KEY".into();
+/// # let auth = "YOUR-API-KEY";
 /// let client = Client::new(auth).await?;
 /// let model = client.generative_model("gemini-pro")
 ///     .with_system_instruction("You are a helpful assistant")
@@ -241,9 +259,9 @@ type GenerationConfig = GenerationConfigP;
 #[derive(Clone, Debug)]
 pub struct GenerativeModel<'c> {
     /// Backing API client
-    pub(super) client: &'c Client,
+    pub(super) client: CClient<'c>,
     /// Fully qualified model name (e.g., "models/gemini-1.0-pro")
-    model_name: String,
+    model_name: Box<str>,
     /// System prompt guiding model behavior
     pub system_instruction: Option<Content>,
     /// Available functions/tools the model can use
@@ -256,7 +274,7 @@ pub struct GenerativeModel<'c> {
     pub generation_config: Option<GenerationConfig>,
     /// Fullname of the cached content to use as context
     /// (e.g., "cachedContents/NAME")
-    pub cached_content: Option<String>,
+    pub cached_content: Option<Box<str>>,
 }
 
 impl<'c> GenerativeModel<'c> {
@@ -268,9 +286,13 @@ impl<'c> GenerativeModel<'c> {
     ///
     /// To access a tuned model named NAME, pass "tunedModels/NAME".
     pub fn new(client: &'c Client, name: &str) -> Self {
+        Self::new_inner(client, name)
+    }
+
+    fn new_inner(client: impl Into<CClient<'c>>, name: &str) -> Self {
         Self {
-            client,
-            model_name: full_model_name(name),
+            client: client.into(),
+            model_name: full_model_name(name).into(),
             system_instruction: None,
             tools: None,
             tool_config: None,
@@ -292,7 +314,7 @@ impl<'c> GenerativeModel<'c> {
     /// use google_ai_rs::Part;
     ///
     /// # async fn f() -> Result<(), Box<dyn std::error::Error>> {
-    /// # let auth = "YOUR-API-KEY".into();
+    /// # let auth = "YOUR-API-KEY";
     /// # let client = Client::new(auth).await?;
     /// # let model = client.generative_model("gemini-pro");
     /// // Simple text generation
@@ -333,16 +355,20 @@ impl<'c> GenerativeModel<'c> {
 
     pub async fn typed_generate_content<I, T>(&self, contents: I) -> Result<T, Error>
     where
-        I: TryIntoContents,
-        T: AsSchema + TryFromCandidates,
+        I: TryIntoContents + Send,
+        T: AsSchema + TryFromCandidates + Send,
     {
+        // FIXME: This and its kind.
+        //
+        // We end-up cloning twice; here and when we prepare request in generate_content call.
+        // we could just build request from here and set the schema
         self.clone().to_typed().generate_content(contents).await
     }
 
     pub async fn generate_typed_content<I, T>(&self, contents: I) -> Result<TypedResponse<T>, Error>
     where
-        I: TryIntoContents,
-        T: AsSchema + TryFromCandidates,
+        I: TryIntoContents + Send,
+        T: AsSchema + TryFromCandidates + Send,
     {
         self.clone()
             .to_typed()
@@ -356,7 +382,7 @@ impl<'c> GenerativeModel<'c> {
     /// ```
     /// # use google_ai_rs::{Client, GenerativeModel};
     /// # async fn f() -> Result<(), Box<dyn std::error::Error>> {
-    /// # let auth = "YOUR-API-KEY".into();
+    /// # let auth = "YOUR-API-KEY";
     /// # let client = Client::new(auth).await?;
     /// # let model = client.generative_model("gemini-pro");
     /// let mut stream = model.stream_generate_content("Tell me a story.").await?;
@@ -399,7 +425,7 @@ impl<'c> GenerativeModel<'c> {
     /// ```
     /// # use google_ai_rs::{Client, GenerativeModel};
     /// # async fn f() -> Result<(), Box<dyn std::error::Error>> {
-    /// # let auth = "YOUR-API-KEY".into();
+    /// # let auth = "YOUR-API-KEY";
     /// # let client = Client::new(auth).await?;
     /// # let model = client.generative_model("gemini-pro");
     /// # let content = "";
@@ -432,13 +458,6 @@ impl<'c> GenerativeModel<'c> {
             .map(|r| r.into_inner())
     }
 
-    pub fn change_model(&mut self, to: &str) {
-        self.model_name = full_model_name(to)
-    }
-
-    pub fn full_name(&self) -> &str {
-        &self.model_name
-    }
     /// info returns information about the model.
     ///
     /// `Info::Tuned` if the current model is a fine-tuned one,
@@ -451,6 +470,14 @@ impl<'c> GenerativeModel<'c> {
         } else {
             Ok(Info::Model(self.client.get_model(&self.model_name).await?))
         }
+    }
+
+    pub fn change_model(&mut self, to: &str) {
+        self.model_name = full_model_name(to).into()
+    }
+
+    pub fn full_name(&self) -> &str {
+        &self.model_name
     }
 
     // Builder pattern methods
@@ -475,7 +502,7 @@ impl<'c> GenerativeModel<'c> {
     /// use google_ai_rs::content::IntoContents as _;
     ///
     /// # async fn f() -> Result<(), Box<dyn std::error::Error>> {
-    /// # let auth = "YOUR-API-KEY".into();
+    /// # let auth = "YOUR-API-KEY";
     /// # let client = Client::new(auth).await?;
     /// let content = "You are a helpful assistant".into_cached_content_for("gemini-1.0-pro");
     ///
@@ -488,7 +515,7 @@ impl<'c> GenerativeModel<'c> {
     pub fn with_cached_content(mut self, c: &CachedContent) -> Result<Self, Error> {
         self.cached_content = Some(
             c.name
-                .as_ref()
+                .as_deref()
                 .ok_or(Error::InvalidArgument(
                     "cached content name is empty".into(),
                 ))?
@@ -520,13 +547,15 @@ impl<'c> GenerativeModel<'c> {
     /// struct PrimaryColor {
     ///     #[schema(description = "The name of the colour")]
     ///     name: String,
-    ///     #[schema(description = "The RGB value of the color, in hex", rename = "RGB")]
+    ///
+    ///     #[schema(description = "The RGB value of the color, in hex")]
+    ///     #[schema(rename = "RGB")]
     ///     rgb: String
     /// }
     ///
     /// # use google_ai_rs::{Client, GenerativeModel};
     /// # async fn f() -> Result<(), Box<dyn std::error::Error>> {
-    /// # let auth = "YOUR-API-KEY".into();
+    /// # let auth = "YOUR-API-KEY";
     /// # let client = Client::new(auth).await?;
     /// let model = client.generative_model("gemini-pro")
     ///         .as_response_schema::<Vec<PrimaryColor>>();
@@ -550,13 +579,13 @@ impl<'c> GenerativeModel<'c> {
     ///
     /// # use google_ai_rs::{Client, GenerativeModel};
     /// # async fn f() -> Result<(), Box<dyn std::error::Error>> {
-    /// # let auth = "YOUR-API-KEY".into();
+    /// # let auth = "YOUR-API-KEY";
     /// # let client = Client::new(auth).await?;
     /// let model = client.generative_model("gemini-pro")
     ///      .with_response_schema(Schema {
-    ///      r#type: SchemaType::String as i32,
-    ///      format: "enum".into(),
-    ///      ..Default::default()
+    ///         r#type: SchemaType::String as i32,
+    ///         format: "enum".into(),
+    ///         ..Default::default()
     /// });
     /// # Ok(())
     /// # }
@@ -570,6 +599,56 @@ impl<'c> GenerativeModel<'c> {
         self
     }
 
+    /// Adds a collection of tools to the model.
+    ///
+    /// Tools define external functions that the model can call.
+    ///
+    /// # Arguments
+    /// * `tools` - An iterator of `Tool` instances.
+    pub fn tools<I>(mut self, tools: I) -> Self
+    where
+        I: IntoIterator<Item = Tool>,
+    {
+        self.tools = Some(tools.into_iter().collect());
+        self
+    }
+
+    /// Configures how the model uses tools.
+    ///
+    /// # Arguments
+    /// * `tool_config` - The configuration for tool usage.
+    pub fn tool_config(mut self, tool_config: impl Into<ToolConfig>) -> Self {
+        self.tool_config = Some(tool_config.into());
+        self
+    }
+
+    /// Applies content safety filters to the model.
+    ///
+    /// Safety settings control the probability thresholds for filtering
+    /// potentially harmful content.
+    ///
+    /// # Arguments
+    /// * `safety_settings` - An iterator of `SafetySetting` instances.
+    pub fn safety_settings<I>(mut self, safety_settings: I) -> Self
+    where
+        I: IntoIterator<Item = SafetySetting>,
+    {
+        self.safety_settings = Some(safety_settings.into_iter().collect());
+        self
+    }
+
+    /// Sets the generation parameters for the model.
+    ///
+    /// This includes settings like `temperature`, `top_k`, and `top_p`
+    /// to control the creativity and randomness of the model's output.
+    ///
+    /// # Arguments
+    /// * `generation_config` - The configuration for generation.
+    pub fn generation_config(mut self, generation_config: impl Into<GenerationConfig>) -> Self {
+        self.generation_config = Some(generation_config.into());
+        self
+    }
+
     /// Creates a copy with new system instructions
     pub fn with_cloned_instruction<I: IntoContent>(&self, instruction: I) -> Self {
         let mut clone = self.clone();
@@ -578,43 +657,114 @@ impl<'c> GenerativeModel<'c> {
         clone
     }
 
+    /// Sets the number of candidates to generate.
+    ///
+    /// This parameter specifies how many different response candidates the model should generate
+    /// for a given prompt. The model will then select the best one based on its internal
+    /// evaluation.
+    pub fn candidate_count(mut self, x: i32) -> Self {
+        self.set_candidate_count(x);
+        self
+    }
+
+    /// Sets the maximum number of output tokens.
+    ///
+    /// This parameter caps the length of the generated response, measured in tokens.
+    /// It's useful for controlling response size and preventing excessively long outputs.
+    pub fn max_output_tokens(mut self, x: i32) -> Self {
+        self.set_max_output_tokens(x);
+        self
+    }
+
+    /// Sets the temperature for generation.
+    ///
+    /// Temperature controls the randomness of the output. Higher values, like 1.0,
+    /// make the output more creative and unpredictable, while lower values, like 0.1,
+    /// make it more deterministic and focused.
+    pub fn temperature(mut self, x: f32) -> Self {
+        self.set_temperature(x);
+        self
+    }
+
+    /// Sets the top-p sampling parameter.
+    ///
+    /// Top-p (also known as nucleus sampling) chooses the smallest set of most likely
+    /// tokens whose cumulative probability exceeds the value of `x`. This technique
+    /// helps to prevent low-probability, nonsensical tokens from being chosen.
+    pub fn top_p(mut self, x: f32) -> Self {
+        self.set_top_p(x);
+        self
+    }
+
+    /// Sets the top-k sampling parameter.
+    ///
+    /// Top-k restricts the model's token selection to the `k` most likely tokens at
+    /// each step. It's a method for controlling the model's creativity and focus.
+    pub fn top_k(mut self, x: i32) -> Self {
+        self.set_top_k(x);
+        self
+    }
+
+    /// Sets the number of candidates to generate.
+    ///
+    /// This parameter specifies how many different response candidates the model should generate
+    /// for a given prompt. The model will then select the best one based on its internal
+    /// evaluation.
     pub fn set_candidate_count(&mut self, x: i32) {
         self.generation_config
             .get_or_insert_default()
             .candidate_count = Some(x)
     }
 
+    /// Sets the maximum number of output tokens.
+    ///
+    /// This parameter caps the length of the generated response, measured in tokens.
+    /// It's useful for controlling response size and preventing excessively long outputs.
     pub fn set_max_output_tokens(&mut self, x: i32) {
         self.generation_config
             .get_or_insert_default()
             .max_output_tokens = Some(x)
     }
 
+    /// Sets the temperature for generation.
+    ///
+    /// Temperature controls the randomness of the output. Higher values, like 1.0,
+    /// make the output more creative and unpredictable, while lower values, like 0.1,
+    /// make it more deterministic and focused.
     pub fn set_temperature(&mut self, x: f32) {
         self.generation_config.get_or_insert_default().temperature = Some(x)
     }
 
+    /// Sets the top-p sampling parameter.
+    ///
+    /// Top-p (also known as nucleus sampling) chooses the smallest set of most likely
+    /// tokens whose cumulative probability exceeds the value of `x`. This technique
+    /// helps to prevent low-probability, nonsensical tokens from being chosen.
     pub fn set_top_p(&mut self, x: f32) {
         self.generation_config.get_or_insert_default().top_p = Some(x)
     }
 
+    /// Sets the top-k sampling parameter.
+    ///
+    /// Top-k restricts the model's token selection to the `k` most likely tokens at
+    /// each step. It's a method for controlling the model's creativity and focus.
     pub fn set_top_k(&mut self, x: i32) {
         self.generation_config.get_or_insert_default().top_k = Some(x)
     }
 
     /// Builds authenticated generation request
+    #[inline(always)]
     async fn build_request(
         &self,
         contents: Vec<Content>,
     ) -> Result<tonic::Request<GenerateContentRequest>, Error> {
-        let mut request = self._build_request(contents).into_request();
-        self.client.add_auth(&mut request).await?;
+        let request = self._build_request(contents).into_request();
         Ok(request)
     }
 
     fn _build_request(&self, contents: Vec<Content>) -> GenerateContentRequest {
         GenerateContentRequest {
-            model: self.model_name.clone(),
+            model: self.model_name.to_string(),
             contents,
             system_instruction: self.system_instruction.clone(),
             tools: self.tools.clone().unwrap_or_default(),
@@ -630,14 +780,35 @@ impl<'c> GenerativeModel<'c> {
         &self,
         contents: Vec<Content>,
     ) -> Result<tonic::Request<CountTokensRequest>, Error> {
-        let mut request = CountTokensRequest {
-            model: self.model_name.clone(),
+        let request = CountTokensRequest {
+            model: self.model_name.to_string(),
             contents: vec![],
             generate_content_request: Some(self._build_request(contents)),
         }
         .into_request();
-        self.client.add_auth(&mut request).await?;
         Ok(request)
+    }
+}
+
+impl SafetySetting {
+    /// Creates a new [`SafetySetting`] with default values
+    pub fn new() -> Self {
+        Self {
+            category: 0,
+            threshold: 0,
+        }
+    }
+
+    /// Set the category for this setting
+    pub fn harm_category(mut self, category: HarmCategory) -> Self {
+        self.category = category.into();
+        self
+    }
+
+    /// Control the probability threshold at which harm is blocked
+    pub fn harm_threshold(mut self, threshold: HarmBlockThreshold) -> Self {
+        self.threshold = threshold.into();
+        self
     }
 }
 
@@ -647,6 +818,7 @@ pub type Response = GenerateContentResponse;
 impl Response {
     /// Total tokens used in request/response cycle
     pub fn total_tokens(&self) -> f64 {
+        // FIXME: I'm confused
         self.usage_metadata.as_ref().map_or(0.0, |meta| {
             meta.total_token_count as f64 + meta.cached_content_token_count as f64
         })
@@ -682,6 +854,34 @@ impl ResponseStream {
         Ok(total)
     }
 
+    /// Streams content chunks to any `AsyncWrite` implementer
+    ///
+    /// # Returns
+    /// Total bytes written
+    pub async fn write_to_sync<W: AsyncWrite + std::marker::Unpin>(
+        &mut self,
+        dst: &mut W,
+    ) -> Result<usize, Error> {
+        use tokio::io::AsyncWriteExt;
+
+        let mut total = 0;
+
+        while let Some(response) = self
+            .next()
+            .await
+            .map_err(|e| Error::Stream(ActionError::Error(e.into())))?
+        {
+            let bytes = response.try_into_bytes()?;
+            let written = dst
+                .write(&bytes)
+                .await
+                .map_err(|e| Error::Stream(ActionError::Action(e)))?;
+            total += written;
+        }
+
+        Ok(total)
+    }
+
     /// Fetches next response chunk
     pub async fn next(&mut self) -> Result<Option<GenerateContentResponse>, Error> {
         self.0.message().await.map_err(status_into_error)
@@ -693,14 +893,26 @@ impl Client {
     ///
     /// Shorthand for `GenerativeModel::new()`
     pub fn generative_model<'c>(&'c self, name: &str) -> GenerativeModel<'c> {
-        GenerativeModel::new(self, name)
+        GenerativeModel::new_inner(self, name)
     }
 
     /// Creates a new typed generative model interface
     ///
     /// Shorthand for `TypedModel::new()`
     pub fn typed_model<'c, T: AsSchema>(&'c self, name: &str) -> TypedModel<'c, T> {
-        TypedModel::<T>::new(self, name)
+        TypedModel::<T>::new_inner(self, name)
+    }
+}
+
+impl SharedClient {
+    /// Creates a new generative model interface
+    pub fn generative_model(&self, name: &str) -> GenerativeModel<'static> {
+        GenerativeModel::new_inner(self.clone(), name)
+    }
+
+    /// Creates a new typed generative model interface
+    pub fn typed_model<T: AsSchema>(&self, name: &str) -> TypedModel<'static, T> {
+        TypedModel::<T>::new_inner(self.clone(), name)
     }
 }
 

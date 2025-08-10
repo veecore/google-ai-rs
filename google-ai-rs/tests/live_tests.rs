@@ -1,3 +1,4 @@
+#![allow(unused_imports)]
 use google_ai_rs::{
     genai::{GenerativeModel, Info},
     AsSchema, Client, Map,
@@ -57,6 +58,7 @@ async fn schema() -> Result<()> {
 
 #[tokio::test]
 #[ignore = "Requires API access"]
+#[cfg(feature = "serde")]
 async fn data_structures_and_typed_model() -> Result<()> {
     #[derive(AsSchema, Deserialize, PartialEq, Eq, Hash)]
     #[schema(description = "High-end fashion bag details")]
@@ -221,5 +223,5 @@ async fn get_client() -> Result<&'static Client> {
 async fn initiate_client() -> Result<Client> {
     let api_key =
         env::var("GEMINI_API_KEY").map_err(|_| "GEMINI_API_KEY should be set for live test")?;
-    Ok(Client::new(api_key.into()).await?)
+    Ok(Client::new(api_key).await?)
 }

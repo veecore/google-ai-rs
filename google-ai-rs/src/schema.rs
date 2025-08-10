@@ -27,10 +27,249 @@ use crate::proto::{Schema, Type};
 // https://spec.openapis.org/oas/v3.0.3#data-types
 pub type SchemaType = Type;
 
-/// Trait for Rust types that can generate `Schema` (a subset of OpenAPI schemas) automatically.
+/// A list of supported OpenAPI data formats for primitive types.
+///
+/// This enum provides a type-safe way to specify the `format` field of a `Schema`,
+/// which is used to provide more detail about primitive data types.
+#[derive(Clone, Copy, Debug)]
+pub enum SchemaFormat {
+    /// 32-bit floating-point number.
+    Float,
+    /// 64-bit floating-point number.
+    Double,
+    /// 32-bit integer.
+    Int32,
+    /// 64-bit integer.
+    Int64,
+    /// A string that can only be one of a predefined set of values.
+    Enum,
+    None,
+}
+
+impl SchemaFormat {
+    /// Returns the string representation of the format.
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Float => "float",
+            Self::Double => "double",
+            Self::Int32 => "int32",
+            Self::Int64 => "int64",
+            Self::Enum => "enum",
+            Self::None => "",
+        }
+    }
+}
+
+/// TODO: Add non-panicking runtime checks (like in into_enum).... also implement is_compatible_with
+/// between schematype and format
+impl Schema {
+    /// Constructs a new schema for the specified primitive type.
+    pub fn new(typ: SchemaType) -> Self {
+        Schema {
+            r#type: typ as i32,
+            ..Default::default()
+        }
+    }
+
+    /// Creates a new schema for an object type.
+    pub fn new_object() -> Self {
+        Self::new(Type::Object)
+    }
+
+    /// Creates a new schema for an array type.
+    pub fn new_array() -> Self {
+        Self::new(Type::Array)
+    }
+
+    /// Creates a new schema for a number type.
+    pub fn new_number() -> Self {
+        Self::new(Type::Number)
+    }
+
+    /// Creates a new schema for an integer type.
+    pub fn new_integer() -> Self {
+        Self::new(Type::Integer)
+    }
+
+    /// Creates a new schema for a string type.
+    pub fn new_string() -> Self {
+        Self::new(Type::String)
+    }
+
+    /// Sets the format of the schema.
+    ///
+    /// This is used for primitive types like `int32`, `int64`, `float`, `double`, or `enum`.
+    pub fn format(mut self, format: SchemaFormat) -> Self {
+        self.format = format.as_str().to_owned();
+        self
+    }
+
+    /// Sets the description of the schema.
+    ///
+    /// The description can be formatted as Markdown.
+    pub fn description(mut self, description: impl Into<String>) -> Self {
+        self.description = description.into();
+        self
+    }
+
+    /// Sets whether the schema value may be null.
+    pub fn nullable(mut self, nullable: bool) -> Self {
+        self.nullable = nullable;
+        self
+    }
+
+    /// Sets the possible enum values for a `String` type.
+    ///
+    /// This method automatically sets the schema's `type` to `String` and its `format` to `Enum`.
+    /// The values provided will be added to the `enum` field.
+    ///
+    /// # Example
+    /// ```rust
+    /// # use google_ai_rs::Schema;
+    /// let enum_schema = Schema::new_string()
+    ///     .into_enum(["EAST", "NORTH", "SOUTH", "WEST"]);
+    /// ```
+    pub fn into_enum<I, S>(self, r#enum: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        // We ensure the schema is a String type before applying enum properties.
+        if self.is_string() {
+            let mut self_with_format = self.format(SchemaFormat::Enum);
+            self_with_format.r#enum = r#enum.into_iter().map(Into::into).collect();
+            self_with_format
+        } else {
+            self
+        }
+    }
+
+    /// Sets the schema for the elements of an `Array` type.
+    ///
+    /// This method is only effective when the schema's type is `Array`. It specifies the
+    /// structure of the items contained within the array.
+    ///
+    /// # Example
+    /// For a `Vec<String>`, you would define the schema like this:
+    /// ```rust
+    /// # use google_ai_rs::Schema;
+    /// let string_array_schema = Schema::new_array()
+    ///     .items(Schema::new_string());
+    /// ```
+    pub fn items(mut self, items: Schema) -> Self {
+        if self.is_array() {
+            self.items = Some(Box::new(items));
+        }
+        self
+    }
+
+    /// Sets the maximum number of elements for an `Array` schema.
+    ///
+    /// This method is only effective when the schema's type is `Array`.
+    pub fn max_items(mut self, max_items: i64) -> Self {
+        if self.is_array() {
+            self.max_items = max_items;
+        }
+        self
+    }
+
+    /// Sets the minimum number of elements for an `Array` schema.
+    ///
+    /// This method is only effective when the schema's type is `Array`.
+    pub fn min_items(mut self, min_items: i64) -> Self {
+        if self.is_array() {
+            self.min_items = min_items;
+        }
+        self
+    }
+
+    /// Adds a single property to an `Object` schema.
+    ///
+    /// This method is a convenience for adding a single key-value pair to the properties map.
+    /// It's only effective when the schema's type is `Object`.
+    ///
+    /// # Arguments
+    /// * `name` - The name of the property.
+    /// * `schema` - The schema definition for the property.
+    pub fn property(mut self, name: impl Into<String>, schema: Schema) -> Self {
+        if self.is_object() {
+            self.properties.insert(name.into(), schema);
+        }
+        self
+    }
+
+    /// Sets the properties for an `Object` schema.
+    ///
+    /// This method is only effective when the schema's type is `Object`.
+    ///
+    /// # Arguments
+    /// * `properties` - An iterator of key-value pairs where the key is the property
+    ///   name and the value is the property's `Schema`.
+    pub fn properties<I, S>(mut self, properties: I) -> Self
+    where
+        I: IntoIterator<Item = (S, Schema)>,
+        S: Into<String>,
+    {
+        if self.is_object() {
+            self.properties = properties.into_iter().map(|(k, v)| (k.into(), v)).collect();
+        }
+        self
+    }
+
+    /// Adds a required field to an `Object` schema.
+    ///
+    /// This method is only effective when the schema's type is `Object`.
+    ///
+    /// # Arguments
+    /// * `name` - The name of the property that is now required.
+    pub fn required_field(mut self, name: impl Into<String>) -> Self {
+        if self.is_object() {
+            self.required.push(name.into());
+        }
+        self
+    }
+
+    /// Sets the list of all required properties for an `Object` schema.
+    ///
+    /// This method is only effective when the schema's type is `Object`.
+    ///
+    /// # Arguments
+    /// * `required` - An iterator of property names that must be present.
+    pub fn required<I, S>(mut self, required: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        if self.is_object() {
+            self.required = required.into_iter().map(Into::into).collect();
+        }
+        self
+    }
+
+    fn is_object(&self) -> bool {
+        SchemaType::Object as i32 == self.r#type
+    }
+
+    fn is_array(&self) -> bool {
+        SchemaType::Array as i32 == self.r#type
+    }
+
+    fn is_string(&self) -> bool {
+        SchemaType::Object as i32 == self.r#type
+    }
+}
+
+/// Trait for Rust types that can generate a `Schema` (a subset of OpenAPI schemas) automatically.
 ///
 /// Implement this trait or derive `AsSchema` to enable schema generation for your types.
 /// The derive macro supports extensive customization through attributes and integrates with Serde.
+///
+/// # Description Attributes
+/// Descriptions can now span multiple lines. You can use multiple `#[schema(description = "...")]`
+/// attributes on a field or a struct. Each attribute's content will be concatenated.
+///
+/// To add a new line, use an empty `#[schema(description = "")]` attribute, similar to how
+/// the standard `///` documentation comments work.
 ///
 /// # Examples
 ///
@@ -40,53 +279,67 @@ pub type SchemaType = Type;
 /// #[derive(AsSchema)]
 /// #[schema(rename_all = "camelCase")]
 /// struct AiReport {
+///     // A single-line description
 ///     #[schema(description = "This should include user's name and date of birth", required)]
 ///     data: String,
+///
+///     // A multi-line description
+///     #[schema(description = "This field contains important metadata.")]
+///     #[schema(description = "")] // New line
+///     #[schema(description = "For example, the creation timestamp and author.")]
+///     metadata: String,
 /// }
 /// ```
 ///
-/// For foreign types, manually implement or use schema attributes:
+/// # Customizing Foreign Types
+///
+/// For types from other crates where you can't add the `derive`, you can either manually
+/// specify its schema or reference a function that generates it.
+///
+/// **1. Using `r#type` and `format`:**
+///
 /// ```rust
 /// use google_ai_rs::AsSchema;
-/// # mod some_crate {
-/// #    pub struct TheirType;
-/// # }
+/// # mod some_crate { pub struct TheirType; }
 ///
 /// #[derive(AsSchema)]
-///  struct AiReport {
-///     #[schema(r#type = "Number", format = "double")]    
+/// struct AiReport {
+///     #[schema(r#type = "Number", format = "double")]
 ///     foreign: some_crate::TheirType
 /// }
 /// ```
 ///
+/// **2. Using `as_schema` with a function:**
+///
+/// This is useful for more complex foreign types.
+///
 /// ```rust
-/// use google_ai_rs::AsSchema;
-/// # mod some_crate {
-/// #    pub struct TheirType;
-/// # }
+/// use google_ai_rs::{AsSchema, Schema, schema::SchemaFormat};
+/// # mod some_crate { pub struct TheirType; }
 ///
 /// #[derive(AsSchema)]
-///  struct AiReport {
+/// struct AiReport {
 ///     #[schema(as_schema = "foreign_type_schema")]
 ///     foreign: some_crate::TheirType
 /// }
 ///
-/// use google_ai_rs::Schema;
-///
 /// fn foreign_type_schema() -> Schema {
-///     # stringify! {
-///     ...
-///     # };
-///     # unimplemented!()   
+///     Schema::new_object()
+///         .description("A custom schema for a foreign type.")
+///         .property("id", Schema::new_number().format(SchemaFormat::Int64))
 /// }
 /// ```
+///
 /// # Serde Compatibility
 ///
-/// - `#[serde(rename)]`/`#[serde(rename_all)]` are automatically respected
-/// - `#[serde(skip)]` fields are excluded from schemas by default
-/// - Disable Serde integration with `#[schema(ignore_serde)]`
+/// The `AsSchema` derive macro automatically integrates with `serde` attributes for convenience.
 ///
-/// # Examples
+/// - `#[serde(rename)]`/`#[serde(rename_all)]` are respected for naming fields in the schema.
+/// - `#[serde(skip)]` fields are automatically excluded from the generated schema.
+/// - You can disable Serde integration for a specific field with `#[schema(ignore_serde)]` or for the whole
+///   type with `#[schema(serde_ignore)]` on the struct.
+///
+/// # Examples with Serde
 ///
 /// ```rust
 /// use google_ai_rs::AsSchema;
@@ -94,14 +347,14 @@ pub type SchemaType = Type;
 /// #[derive(AsSchema, serde::Deserialize)]
 /// struct AiReport {
 ///     #[schema(description = "Important field", required)]
-///     #[serde(rename = "json_field")]  // Applies to schema too
+///     #[serde(rename = "json_field")] // Applies to the schema too
 ///     field: String,
 ///
-///     #[serde(skip)]  // Excluded from schema
+///     #[serde(skip)] // Excluded from schema
 ///     internal: String,
 ///
-///     #[schema(skip)]  // Override Serde behavior
-///     #[serde(rename = "count")]  // Ignored by schema
+///     #[schema(skip)] // Overrides Serde's behavior and excludes from schema
+///     #[serde(rename = "count")] // This rename is ignored by the schema
 ///     item_count: i32,
 /// }
 /// ```
@@ -113,7 +366,6 @@ pub type SchemaType = Type;
         note = "consider google_ai_rs::Map for maps, and google_ai_rs::Tuple or derive AsSchemaWithSerde for tuples"
     )
 )]
-// TODO: Shorten diagnosis message
 pub trait AsSchema {
     /// Generates the OpenAPI schema for this type
     fn as_schema() -> Schema;
@@ -153,7 +405,6 @@ macro_rules! wrapper_generic {
 	        	T: AsSchema $(+ $b0 $(+ $b)*)* + ?Sized,
                 $($g: $gb,)*
 	        {
-	            #[inline]
 	            fn as_schema() -> Schema {
 	                T::as_schema()
 	            }
@@ -185,13 +436,12 @@ impl<'a, T: AsSchema + ToOwned + ?Sized + 'a> AsSchema for Cow<'a, T> {
 }
 
 macro_rules! number {
-    ($($n:ident, $ty:ident, $format:expr)*) => {
+    ($($n:ident, $ty:ident, $format:ident)*) => {
         $(impl AsSchema for $n {
-            #[inline]
             fn as_schema() -> Schema {
                 Schema {
 		            r#type: SchemaType::$ty as i32,
-		            format: $format.into(),
+		            format: SchemaFormat::$format.as_str().into(),
 		            ..Default::default()
 		        }
             }
@@ -199,60 +449,55 @@ macro_rules! number {
     };
 }
 
-// These are positive integers. But, integer
-// is wider so we can't strictly call them
-// integers. It'd be our fault if the model
-// outputs -2
 number! {
-    usize, Number, ""
-    u8, Number, ""
-    u16, Number, ""
-    u32, Number, ""
-    u64, Number, ""
-    u128, Number, ""
-    AtomicUsize, Number, ""
-    AtomicU8, Number, ""
-    AtomicU16, Number, ""
-    AtomicU32, Number, ""
-    AtomicU64, Number, ""
-    NonZeroUsize, Number, ""
-    NonZeroU8, Number, ""
-    NonZeroU16, Number, ""
-    NonZeroU32, Number, ""
-    NonZeroU64, Number, ""
-    NonZeroU128, Number, ""
+    usize, Number, None
+    u8, Number, None
+    u16, Number, None
+    u32, Number, None
+    u64, Number, None
+    u128, Number, None
+    AtomicUsize, Number, None
+    AtomicU8, Number, None
+    AtomicU16, Number, None
+    AtomicU32, Number, None
+    AtomicU64, Number, None
+    NonZeroUsize, Number, None
+    NonZeroU8, Number, None
+    NonZeroU16, Number, None
+    NonZeroU32, Number, None
+    NonZeroU64, Number, None
+    NonZeroU128, Number, None
 }
 
 number! {
-    isize, Integer, ""
-    i8, Integer, ""
-    i16, Integer, ""
-    i32, Integer, "int32"
-    i64, Integer, "int64"
-    i128, Integer, ""
-    AtomicIsize, Integer, ""
-    AtomicI8, Integer, ""
-    AtomicI16, Integer, ""
-    AtomicI32, Integer, "int32"
-    AtomicI64, Integer, "int64"
-    NonZeroIsize, Integer, ""
-    NonZeroI8, Integer, ""
-    NonZeroI16, Integer, ""
-    NonZeroI32, Integer, "int32"
-    NonZeroI64, Integer, "int64"
-    NonZeroI128, Integer, ""
+    isize, Integer, None
+    i8, Integer, None
+    i16, Integer, None
+    i32, Integer, Int32
+    i64, Integer, Int64
+    i128, Integer, None
+    AtomicIsize, Integer, None
+    AtomicI8, Integer, None
+    AtomicI16, Integer, None
+    AtomicI32, Integer, Int32
+    AtomicI64, Integer, Int64
+    NonZeroIsize, Integer, None
+    NonZeroI8, Integer, None
+    NonZeroI16, Integer, None
+    NonZeroI32, Integer, Int32
+    NonZeroI64, Integer, Int64
+    NonZeroI128, Integer, None
 }
 
 number! {
-    f32, Number, "float" // fixed
-    f64, Number, "double"
+    f32, Number, Float
+    f64, Number, Double
 }
 
 macro_rules! string {
     ($($n:ident)*) => {
     	$(
         impl AsSchema for $n {
-            #[inline]
             fn as_schema() -> Schema {
                 Schema {
                     r#type: SchemaType::String as i32,
@@ -296,7 +541,6 @@ macro_rules! list_generic {
 	        	T: AsSchema $(+ $b0 $(+ $b)*)*,
 	        	$($g: $gb,)*
 	        {
-	            #[inline]
 	            fn as_schema() -> Schema {
 	                Schema {
 			            r#type: SchemaType::Array as i32,
@@ -396,6 +640,43 @@ macro_rules! custom_wrapper_utils {
             }
         }
 
+        impl<T> IntoIterator for $name<T>
+        where
+            T: IntoIterator
+        {
+            type Item = T::Item;
+            type IntoIter = T::IntoIter;
+
+            fn into_iter(self) -> Self::IntoIter {
+                self.inner.into_iter()
+            }
+        }
+
+        impl<'a, T> IntoIterator for &'a $name<T>
+        where
+            &'a T: IntoIterator
+        {
+            type Item = <&'a T as IntoIterator>::Item;
+            type IntoIter = <&'a T as IntoIterator>::IntoIter;
+
+            fn into_iter(self) -> Self::IntoIter {
+                self.inner.into_iter()
+            }
+        }
+
+
+        impl<'a, T> IntoIterator for &'a mut $name<T>
+        where
+            &'a mut T: IntoIterator
+        {
+            type Item = <&'a mut T as IntoIterator>::Item;
+            type IntoIter = <&'a mut T as IntoIterator>::IntoIter;
+
+            fn into_iter(self) -> Self::IntoIter {
+                self.inner.into_iter()
+            }
+        }
+
         impl<T> $name<T> {
             pub fn new(inner: T) -> Self {
                 Self { inner }
@@ -416,7 +697,7 @@ custom_wrapper_utils! {
 /// A wrapper type to represent maps in Google Schema-friendly format.
 ///
 /// Google Schema doesn't natively support maps, so this represents them as arrays
-/// of key-value pairs using the `Entry` struct. Provides schema generation through
+/// of key-value pairs using an `Entry` struct. Provides schema generation through
 /// `AsSchema` and optional serde deserialization.
 ///
 /// # Examples
@@ -471,7 +752,7 @@ custom_wrapper_utils! {
 /// **Deserialization Note:**  
 /// Requires `serde` feature. Works best when `T` uses `MapAccess::next_entry` variants.
 #[derive(Default)]
-pub struct Map<T> {
+pub struct Map<T: ?Sized> {
     inner: T,
 }
 
@@ -604,7 +885,7 @@ where
 /// **Deserialization Note:**  
 /// Requires `serde` feature
 #[derive(Default)]
-pub struct Tuple<T> {
+pub struct Tuple<T: ?Sized> {
     inner: T,
 }
 
@@ -683,6 +964,7 @@ mod serde_support {
         T::Key: Deserialize<'de>,
         T::Value: Deserialize<'de>,
     {
+        #[inline]
         fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
         where
             D: Deserializer<'de>,
@@ -699,6 +981,7 @@ mod serde_support {
     where
         T: MapTrait + Deserialize<'de>,
     {
+        #[inline]
         fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
         where
             D: Deserializer<'de>,

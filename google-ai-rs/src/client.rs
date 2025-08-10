@@ -1,11 +1,14 @@
+#[allow(unused_imports)]
 use std::collections::VecDeque;
+use std::ops::Deref;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::RwLock;
+use tonic::body::Body;
 use tonic::transport::{Channel, ClientTlsConfig, Endpoint};
-use tonic::IntoRequest;
+use tonic::{IntoRequest, RawRequest};
 
-use crate::auth::{add_auth, Auth};
+use crate::auth::{Auth, AuthParsed};
 use crate::content::UpdateFieldMask as _;
 use crate::error::{status_into_error, Error, NetError, SetupError, TonicTransportError};
 use crate::full_model_name;
@@ -26,6 +29,8 @@ const DEFAULT_TIMEOUT: Duration = Duration::from_secs(120);
 const BASE_API_URL: &str = "https://generativelanguage.googleapis.com";
 /// Default page size for paginated requests (server determines actual size when 0)
 const DEFAULT_PAGE_SIZE: i32 = 0;
+/// Default user agent for the client (to be appended to tonic's)
+const USER_AGENT: &str = "google-ai-rs/0.1 (Rust)";
 
 /// A thread-safe client for interacting with Google's Generative Language API.
 ///
@@ -37,11 +42,10 @@ const DEFAULT_PAGE_SIZE: i32 = 0;
 ///
 /// # Example
 /// ```
-/// use google_ai_rs::{Client, Auth};
+/// use google_ai_rs::Client;
 ///
 /// # async fn f() -> Result<(), Box<dyn std::error::Error>> {
-/// let auth = Auth::new("your-api-key");
-/// let client = Client::new(auth).await?;
+/// let client = Client::new("your-api-key").await?;
 /// # Ok(())
 /// # }
 /// ```
@@ -53,7 +57,61 @@ pub struct Client {
     pub(super) cc: CacheServiceClient<Channel>,
     pub(super) mc: ModelServiceClient<Channel>,
     /// Authentication credentials with concurrent access support
-    auth: Arc<RwLock<Auth>>,
+    #[cfg(feature = "auth_update")]
+    // Enable this if we have auth_update
+    auth_update: Arc<RwLock<AuthParsed>>,
+}
+
+/// A thread-safe, cheaply clonable client for interacting with the Generative Language API.
+///
+/// This client wraps a standard `Client` in an `Arc`, making it easy to share
+/// across threads without lifetime issues. Unlike the regular `Client`, which
+/// provides a borrowed reference (`&'c self`), methods on `SharedClient`
+/// return models with a static lifetime (`'static`), allowing them to be
+/// moved and stored independently of the client.
+///
+/// Use `SharedClient` when you need to pass the client to different threads,
+/// store it in a global state, or when the client is intended to live for the
+/// duration of the application.
+///
+/// # Example
+/// ```
+/// use google_ai_rs::{Client, SharedClient};
+///
+/// # async fn f() -> Result<(), Box<dyn std::error::Error>> {
+/// let client = Client::new("your-api-key").await?;
+/// let shared_client: SharedClient = client.into_shared();
+///
+/// let model = shared_client.generative_model("models/gemini-pro");
+/// // The model can now be used in a different thread or stored.
+///
+/// drop(shared_client);
+///
+/// // You can still use model
+/// model.generate_content("Hello, AI").await?;
+///
+/// # Ok(())
+/// # }
+/// ```
+#[derive(Clone, Debug)]
+pub struct SharedClient {
+    inner: Arc<Client>,
+}
+
+impl Deref for SharedClient {
+    type Target = Client;
+
+    fn deref(&self) -> &Self::Target {
+        &self.inner
+    }
+}
+
+impl From<Client> for SharedClient {
+    fn from(value: Client) -> Self {
+        SharedClient {
+            inner: Arc::new(value),
+        }
+    }
 }
 
 impl Client {
@@ -64,9 +122,11 @@ impl Client {
     ///
     /// # Errors
     /// Returns [`Error::Setup`] for configuration issues or [`Error::Net`] for connection failures.
-    pub async fn new(auth: Auth) -> Result<Self, Error> {
+    pub async fn new(auth: impl Into<Auth> + Send) -> Result<Self, Error> {
         ClientBuilder::new()
             .timeout(DEFAULT_TIMEOUT)
+            .user_agent(USER_AGENT)
+            .unwrap()
             .build(auth)
             .await
     }
@@ -76,12 +136,37 @@ impl Client {
         ClientBuilder::new()
     }
 
+    /// Converts the `Client` into a `SharedClient`.
+    ///
+    /// This moves the `Client` into an `Arc`, making it suitable for
+    /// multithreaded applications or long-lived static contexts.
+    pub fn into_shared(self) -> SharedClient {
+        self.into()
+    }
+
     /// Updates authentication credentials atomically
     ///
     /// Subsequent requests will use the new credentials immediately. This operation
     /// is thread-safe.
-    pub async fn update_auth(&self, new_auth: Auth) {
-        *self.auth.write().await = new_auth;
+    ///
+    /// # Panics
+    ///
+    /// May panic if auth cannot parsed
+    #[cfg(feature = "auth_update")]
+    pub async fn update_auth(&self, new_auth: impl Into<Auth> + Send) {
+        self.update_auth_fallibly(new_auth)
+            .await
+            .expect("Auth parsing failed in update_auth — ensure input was valid")
+    }
+
+    /// Fallible [`Self::update_auth`].
+    #[cfg(feature = "auth_update")]
+    pub async fn update_auth_fallibly(
+        &self,
+        new_auth: impl Into<Auth> + Send,
+    ) -> Result<(), crate::auth::Error> {
+        *self.auth_update.write().await = new_auth.into().parsed()?;
+        Ok(())
     }
 
     /// Creates a new cached content entry
@@ -101,12 +186,10 @@ impl Client {
             ));
         }
 
-        let mut request = CreateCachedContentRequest {
+        let request = CreateCachedContentRequest {
             cached_content: Some(content),
         }
         .into_request();
-
-        self.add_auth(&mut request).await?;
 
         self.cc
             .clone()
@@ -118,12 +201,10 @@ impl Client {
 
     /// Retrieves the `CachedContent` with the given name.
     pub async fn get_cached_content(&self, name: &str) -> Result<CachedContent, Error> {
-        let mut request = GetCachedContentRequest {
+        let request = GetCachedContentRequest {
             name: name.to_owned(),
         }
         .into_request();
-
-        self.add_auth(&mut request).await?;
 
         self.cc
             .clone()
@@ -135,12 +216,10 @@ impl Client {
 
     /// Deletes the `CachedContent` with the given name.
     pub async fn delete_cached_content(&self, name: &str) -> Result<(), Error> {
-        let mut request = DeleteCachedContentRequest {
+        let request = DeleteCachedContentRequest {
             name: name.to_owned(),
         }
         .into_request();
-
-        self.add_auth(&mut request).await?;
 
         self.cc
             .clone()
@@ -156,13 +235,11 @@ impl Client {
     ///
     /// The argument CachedContent must have its name field and fields to update populated.
     pub async fn update_cached_content(&self, cc: &CachedContent) -> Result<CachedContent, Error> {
-        let mut request = UpdateCachedContentRequest {
+        let request = UpdateCachedContentRequest {
             cached_content: Some(cc.to_owned()),
             update_mask: Some(cc.field_mask()),
         }
         .into_request();
-
-        self.add_auth(&mut request).await?;
 
         self.cc
             .clone()
@@ -175,19 +252,18 @@ impl Client {
     /// Returns an async iterator over cached content entries
     ///
     /// Automatically handles pagination through server-side results.
-    pub fn list_cached_contents(&self) -> CachedContentIterator {
+    pub fn list_cached_contents(&self) -> CachedContentIterator<'_> {
         PageIterator::<CachedContentPager>::new(self)
     }
 
     /// Gets information about a specific `Model` such as its version number, token
     /// limits, etc
     pub async fn get_model(&self, name: &str) -> Result<Model, Error> {
-        let mut request = GetModelRequest {
-            name: full_model_name(name),
+        let request = GetModelRequest {
+            name: full_model_name(name).to_string(),
         }
         .into_request();
 
-        self.add_auth(&mut request).await?;
         self.mc
             .clone()
             .get_model(request)
@@ -198,12 +274,11 @@ impl Client {
 
     /// Gets information about a specific `TunedModel`.
     pub async fn get_tuned_model(&self, resource_name: &str) -> Result<TunedModel, Error> {
-        let mut request = GetTunedModelRequest {
+        let request = GetTunedModelRequest {
             name: resource_name.to_owned(),
         }
         .into_request();
 
-        self.add_auth(&mut request).await?;
         self.mc
             .clone()
             .get_tuned_model(request)
@@ -215,26 +290,24 @@ impl Client {
     /// Returns an async iterator over models list results
     ///
     /// Automatically handles pagination through server-side results.
-    pub async fn list_models(&self) -> ModelsListIterator {
+    pub async fn list_models(&self) -> ModelsListIterator<'_> {
         PageIterator::<ModelsListPager>::new(self)
     }
 
     /// Returns an async iterator over tuned models list results
     ///
     /// Automatically handles pagination through server-side results.
-    pub async fn list_tuned_models(&self) -> TunedModelsListIterator {
+    pub async fn list_tuned_models(&self) -> TunedModelsListIterator<'_> {
         PageIterator::<TunedModelsListPager>::new(self)
     }
 
     /// Updates a tuned model.
     pub async fn update_tuned_model(&self, m: &TunedModel) -> Result<TunedModel, Error> {
-        let mut request = UpdateTunedModelRequest {
+        let request = UpdateTunedModelRequest {
             tuned_model: Some(m.to_owned()),
             update_mask: Some(m.field_mask()),
         }
         .into_request();
-
-        self.add_auth(&mut request).await?;
 
         self.mc
             .clone()
@@ -246,12 +319,10 @@ impl Client {
 
     /// Deletes the `TunedModel` with the given name.
     pub async fn delete_tuned_model(&self, name: &str) -> Result<(), Error> {
-        let mut request = DeleteTunedModelRequest {
+        let request = DeleteTunedModelRequest {
             name: name.to_owned(),
         }
         .into_request();
-
-        self.add_auth(&mut request).await?;
 
         self.mc
             .clone()
@@ -259,11 +330,6 @@ impl Client {
             .await
             .map_err(status_into_error)
             .map(|r| r.into_inner())
-    }
-
-    /// Adds authentication metadata to a request
-    pub(super) async fn add_auth<T>(&self, request: &mut tonic::Request<T>) -> Result<(), Error> {
-        Ok(add_auth(request, &*self.auth.read().await).await?)
     }
 }
 
@@ -313,6 +379,11 @@ impl ClientBuilder {
         self
     }
 
+    /// Finalizes configuration and constructs a [`SharedClient`]
+    pub async fn build_shared(self, auth: impl Into<Auth> + Send) -> Result<SharedClient, Error> {
+        self.build(auth).await.map(Into::into)
+    }
+
     /// Finalizes configuration and constructs client
     ///
     /// # Arguments
@@ -321,23 +392,83 @@ impl ClientBuilder {
     /// # Errors
     /// - Returns [`Error::Setup`] for invalid configurations
     /// - Returns [`Error::Net`] for connection failures  
-    pub async fn build(self, auth: Auth) -> Result<Client, Error> {
-        let channel = self
+    pub async fn build(self, auth: impl Into<Auth> + Send) -> Result<Client, Error> {
+        let endpoint = self
             .endpoint
             .tls_config(ClientTlsConfig::new().with_enabled_roots())
-            .map_err(|e| SetupError::new("TLS configuration", e))?
-            .connect()
-            .await
-            .map_err(|e| {
-                Error::Net(NetError::TransportFailure(TonicTransportError(Box::new(e))))
-            })?;
+            .map_err(|e| SetupError::new("TLS configuration", e))?;
 
-        Ok(Client {
+        // We make sure to parse to avoid 'after init' error
+        let auth = auth.into().parsed()?;
+
+        // We need exclusive access when we may need to update
+        #[cfg(feature = "auth_update")]
+        let auth = Arc::new(RwLock::new(auth));
+        let auth_update = auth.clone();
+
+        // This is done to reduce client size and eliminate calls to add_auth
+        // in library methods.
+        let auth_adder = async move |mut raw_request: RawRequest<Body>| {
+            #[cfg(not(feature = "auth_update"))]
+            let _jwt_fut = auth._into_request(raw_request.headers_mut());
+
+            #[cfg(feature = "auth_update")]
+            let binding = auth.read().await;
+            let _jwt_fut = binding.to_request(raw_request.headers_mut());
+
+            #[cfg(feature = "jwt")]
+            _jwt_fut.await;
+
+            raw_request
+        };
+
+        let channel = unsafe { endpoint.connect_with_modifier_fn(auth_adder) };
+
+        let channel = channel.await.map_err(|e| {
+            Error::Net(NetError::TransportFailure(TonicTransportError(Box::new(e))))
+        })?;
+
+        let client = Client {
             gc: GenerativeServiceClient::new(channel.clone()),
             cc: CacheServiceClient::new(channel.clone()),
             mc: ModelServiceClient::new(channel),
-            auth: Arc::new(RwLock::new(auth)),
-        })
+            #[cfg(feature = "auth_update")]
+            auth_update,
+        };
+
+        Ok(client)
+    }
+}
+
+// I don't know what to name it but think CowClient
+#[derive(Clone, Debug)]
+pub(crate) enum CClient<'a> {
+    Shared(SharedClient),
+    Borrowed(&'a Client),
+}
+
+#[allow(clippy::from_over_into)]
+impl Into<CClient<'static>> for SharedClient {
+    fn into(self) -> CClient<'static> {
+        CClient::Shared(self)
+    }
+}
+
+#[allow(clippy::from_over_into)]
+impl<'a> Into<CClient<'a>> for &'a Client {
+    fn into(self) -> CClient<'a> {
+        CClient::Borrowed(self)
+    }
+}
+
+impl Deref for CClient<'_> {
+    type Target = Client;
+
+    fn deref(&self) -> &Self::Target {
+        match self {
+            CClient::Shared(shared_client) => &shared_client.inner,
+            CClient::Borrowed(client) => client,
+        }
     }
 }
 
@@ -424,13 +555,11 @@ impl Page for CachedContentPager {
         client: &Client,
         page_token: &str,
     ) -> Result<(Vec<Self::Content>, String), Error> {
-        let mut request = ListCachedContentsRequest {
+        let request = ListCachedContentsRequest {
             page_size: DEFAULT_PAGE_SIZE,
             page_token: page_token.to_owned(),
         }
         .into_request();
-
-        client.add_auth(&mut request).await?;
 
         let response = client
             .cc
@@ -453,13 +582,11 @@ impl Page for ModelsListPager {
         client: &Client,
         page_token: &str,
     ) -> Result<(Vec<Self::Content>, String), Error> {
-        let mut request = ListModelsRequest {
+        let request = ListModelsRequest {
             page_size: DEFAULT_PAGE_SIZE,
             page_token: page_token.to_owned(),
         }
         .into_request();
-
-        client.add_auth(&mut request).await?;
 
         let response = client
             .mc
@@ -482,14 +609,12 @@ impl Page for TunedModelsListPager {
         client: &Client,
         page_token: &str,
     ) -> Result<(Vec<Self::Content>, String), Error> {
-        let mut request = ListTunedModelsRequest {
+        let request = ListTunedModelsRequest {
             page_size: DEFAULT_PAGE_SIZE,
             page_token: page_token.to_owned(),
             filter: String::new(),
         }
         .into_request();
-
-        client.add_auth(&mut request).await?;
 
         let response = client
             .mc

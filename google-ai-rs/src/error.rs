@@ -235,6 +235,7 @@ impl StdError for TonicTransportError {
 /// Wrapper for Tonic status errors with enhanced formatting
 #[derive(Debug)]
 pub struct TonicStatus(pub Box<tonic::Status>);
+// TODO: tonic::Status's size been reduced... remove the boxing
 
 impl fmt::Display for TonicStatus {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -283,3 +284,5 @@ impl From<&str> for Error {
         Error::InvalidArgument(err.into())
     }
 }
+
+// TODO: Totally revamp with backward-compatibility
