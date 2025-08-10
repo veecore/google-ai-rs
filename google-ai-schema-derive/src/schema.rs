@@ -5,7 +5,6 @@ use quote::{quote_each_token, ToTokens, TokenStreamExt as _};
 use std::{
     collections::HashMap,
     fmt::{self, Debug},
-    str::FromStr,
 };
 use syn::{spanned::Spanned as _, token::Brace, ExprPath, Ident};
 
@@ -18,23 +17,87 @@ macro_rules! quote_each_token_spanned {
     };
 }
 
-#[derive(PartialEq, Eq, Hash, Clone, Copy, Default, Debug)]
-pub(super) enum Type {
-    /// Not specified, should not be used.
-    #[default]
-    Unspecified,
-    /// String type.
-    String = 1,
-    /// Number type.
-    Number = 2,
-    /// Integer type.
-    Integer = 3,
-    /// Boolean type.
-    Boolean = 4,
-    /// Array type.
-    Array = 5,
-    /// Object type.
-    Object = 6,
+pub struct UnknownVariant;
+
+impl fmt::Debug for UnknownVariant {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("Unknown Variant")        
+    }
+}
+
+macro_rules! declare_enum_attr {
+    (
+        $(#[$meta:meta])*
+        $vis:vis enum $ty:ident = $ty_parallel:ident {
+            $(
+                $(#[$v_meta:meta])*
+                $variant:ident = $r:tt = $val:literal
+            ),*
+        }
+    ) => {
+        $(#[$meta])*
+        $vis enum $ty {
+            $(
+                $(#[$v_meta])*
+                $variant = $r
+            ),*
+        }
+        
+        impl $crate::attr::TryFromParse<syn::LitStr> for $ty {
+            fn try_from_parse(parse: syn::LitStr) -> Result<Self, syn::Error> {
+                let value = parse.value();
+                let span = parse.span();
+                value.parse().map_err(|_| {
+                    let err = $crate::attr::unknown_one_of_error(value, &mut [$($val),*], stringify!($ty_parallel));
+                    syn::Error::new(span, err)
+                })
+            }
+        }
+
+        impl std::str::FromStr for $ty {
+            type Err = $crate::schema::UnknownVariant;
+
+            fn from_str(s: &str) -> Result<Self, Self::Err> {
+                match s {
+                    $(
+                        $val => Ok(Self::$variant),
+                    )*
+                    _ => Err($crate::schema::UnknownVariant)
+                }
+            }
+        }
+
+        impl std::fmt::Display for $ty {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                match self {
+                    $(
+                        Self::$variant => f.write_str($val),
+                    )*
+                }
+            }
+        }
+    }
+}
+
+declare_enum_attr! {
+   #[derive(PartialEq, Eq, Hash, Clone, Copy, Default, Debug)]
+    pub(super) enum Type = SchemaType {
+        /// Not specified, should not be used.
+        #[default]
+        Unspecified = 0 = "Unspecified",
+        /// String type.
+        String = 1 = "String",
+        /// Number type.
+        Number = 2 = "Number",
+        /// Integer type.
+        Integer = 3 = "Integer",
+        /// Boolean type.
+        Boolean = 4 = "Boolean",
+        /// Array type.
+        Array = 5 = "Array",
+        /// Object type.
+        Object = 6 = "Object"
+    }
 }
 
 impl Type {
@@ -46,40 +109,7 @@ impl Type {
                     Type::Number | Type::Integer,
                     Format::Float | Format::Double | Format::Int32 | Format::Int64,
                 )
-                | (_, Format::Empty)
         )
-    }
-}
-
-impl FromStr for Type {
-    type Err = &'static str;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s {
-            "Unspecified" => Ok(Self::Unspecified),
-            "String" => Ok(Self::String),
-            "Number" => Ok(Self::Number),
-            "Integer" => Ok(Self::Integer),
-            "Boolean" => Ok(Self::Boolean),
-            "Array" => Ok(Self::Array),
-            "Object" => Ok(Self::Object),
-            _ => Err("Invalid type"),
-        }
-    }
-}
-
-impl fmt::Display for Type {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let ty = match self {
-            Type::Unspecified => "Unspecified",
-            Type::String => "String",
-            Type::Number => "Number",
-            Type::Integer => "Integer",
-            Type::Boolean => "Boolean",
-            Type::Array => "Array",
-            Type::Object => "Object",
-        };
-        f.write_str(ty)
     }
 }
 
@@ -90,44 +120,15 @@ impl ToTokens for Type {
     }
 }
 
-#[derive(PartialEq, Eq, Default, Clone, Copy, Debug)]
-pub(super) enum Format {
-    #[default]
-    Empty,
-    Float,
-    Double,
-    Int32,
-    Int64,
-    Enum,
-}
-
-impl FromStr for Format {
-    type Err = &'static str;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s {
-            "float" => Ok(Self::Float),
-            "double" => Ok(Self::Double),
-            "int32" => Ok(Self::Int32),
-            "int64" => Ok(Self::Int64),
-            "enum" => Ok(Self::Enum),
-            "" => Ok(Self::Empty),
-            _ => Err("Invalid format"),
-        }
-    }
-}
-
-impl fmt::Display for Format {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let format = match self {
-            Format::Float => "float",
-            Format::Double => "double",
-            Format::Int32 => "int32",
-            Format::Int64 => "int64",
-            Format::Enum => "enum",
-            Format::Empty => "",
-        };
-        f.write_str(format)
+declare_enum_attr! {
+    #[derive(PartialEq, Eq, Default, Clone, Copy, Debug)]
+    pub(super) enum Format = SchemaFormat /*TODO: We should have this in the main library*/ {
+        #[default]
+        Float = 0 = "float",
+        Double = 1 = "double",
+        Int32 = 2 = "int32",
+        Int64 = 3 = "int64",
+        Enum = 4 = "enum"
     }
 }
 

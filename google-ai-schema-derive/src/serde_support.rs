@@ -9,7 +9,9 @@ use syn::{
     PredicateLifetime, TraitBound, TypeParamBound, WherePredicate,
 };
 
-use crate::{attr, Schema, SchemaImpl};
+use crate::{
+    attr::SetAttr, Schema, SchemaImpl
+};
 
 macro_rules! r#try {
     ($expr:expr) => {
@@ -63,6 +65,7 @@ pub(super) fn derive_schema_with_serde(input: TokenStream) -> TokenStream {
     let serde_impl = quote! {
         #[automatically_derived]
         impl #impl_generics #serde::Deserialize<#delife> for #ident #ty_generics_where_clause {
+            #[inline(always)]
             fn deserialize<__D>(__deserializer: __D) -> ::std::result::Result<Self, __D::Error>
                 where
                     __D: #serde::Deserializer<#delife>,
@@ -86,14 +89,11 @@ struct Context {
 
 impl Context {
     fn new(input: DeriveInput) -> Result<Self, Error> {
-        const SERDE_PATH_ATTR: &str = "crate"; // right?
 
         let inner = crate::Context::new(input)?;
 
-        let serde_path = attr::find_attrs([SERDE_PATH_ATTR], &inner.input.attrs, "serde")?;
-        let serde_path = serde_path[0]
-            .as_ref()
-            .map_or_else(|| Ok(syn::parse_quote!(::serde)), |c| c.parse())?;
+        let serde_path = SetAttr::find_serde_crate(&inner.input.attrs)?;
+        let serde_path = serde_path.unwrap_or_else(|| syn::parse_quote!(::serde));
 
         Ok(Self { inner, serde_path })
     }

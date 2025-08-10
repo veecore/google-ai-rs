@@ -69,6 +69,48 @@ use syn::{
 /// Derive macro for AsSchema trait.
 ///
 /// ## Implementation Notes
+/// ### 1. Description Concatenation
+/// ```rust
+/// # mod google_ai_rs {
+/// #   pub trait AsSchema { fn as_schema() -> Schema; }
+/// #   pub enum SchemaType { Unspecified = 0, String = 1, Number = 2, Integer = 3, Boolean = 4, Array = 5,Object = 6, }
+/// #   #[derive(Default, PartialEq, Eq, Debug)]
+/// #   pub struct Schema { pub r#type: i32, pub format: String, pub description: String, pub nullable: bool, pub r#enum: Vec<String>,
+/// #   pub items: Option<Box<Schema>>, pub max_items: i64, pub min_items: i64, pub properties: std::collections::HashMap<String, Schema>,
+/// #   pub required: Vec<String>, }
+/// #   impl AsSchema for String {fn as_schema() -> Schema {Schema {r#type: SchemaType::String as i32, ..Default::default()}}}
+/// # }
+/// # use google_ai_rs::*;
+/// #
+/// # use google_ai_schema_derive::AsSchema;
+/// #[derive(AsSchema)]
+/// # #[schema(crate_path = "google_ai_rs")]
+/// #[schema(description = "Top description ")]
+/// #[schema(description = "continuation")]
+/// struct Type {
+///     #[schema(description = "field description ")]
+///     #[schema(description = "continuation")]
+///     field: String,
+/// }
+///
+/// assert_eq!(
+///     Type::as_schema(),
+///     Schema {
+///         description: "Top description continuation".to_owned(),
+///         r#type: SchemaType::Object as i32,
+///         properties: [(
+///             "field".to_owned(),
+///              Schema {
+///                 description: "field description continuation".to_owned(),
+///                 ..String::as_schema()
+///              }
+///         )].into(),
+///         required: ["field".to_owned()].into(),
+///         ..Default::default()
+///     }
+/// )
+/// ```
+///
 /// ### 1. Custom Schema Generation
 /// **`as_schema`** - Direct schema override:
 /// ```rust
@@ -324,8 +366,8 @@ impl Context {
         let top_attr = attr::parse_top(&input.attrs)?;
         let crate_path = top_attr
             .crate_path
-            .as_ref()
-            .map_or_else(|| Ok(parse_quote!(::google_ai_rs)), |c| c.parse())?;
+            .clone()
+            .unwrap_or_else(|| parse_quote!(::google_ai_rs));
 
         Ok(Self {
             input,
@@ -703,7 +745,7 @@ fn impl_enum(ctx: &mut Context, data: &DataEnum) -> Result<Schema, Error> {
 
         for variant in &data.variants {
             let schema_attrs =
-                attr::parse_enum(&variant.attrs, top_attr.ignore_serde.unwrap_or(false))?;
+                attr::parse_plain_enum(&variant.attrs, top_attr.ignore_serde.unwrap_or(false))?;
 
             if schema_attrs.skip.unwrap_or_default() {
                 continue;
@@ -734,31 +776,30 @@ fn generate_item_schema(
     schema_attrs: &Attr,
     item_ty: &Type,
 ) -> Result<Schema, Error> {
+
     let description = schema_attrs.description.clone();
     let nullable = schema_attrs.nullable;
     let min_items = schema_attrs.min_items;
     let max_items = schema_attrs.max_items;
 
-    if let Some(ty) = &schema_attrs.r#type {
-        let r#type: schema::Type = ty.value().parse().map_err(|m| Error::new(ty.span(), m))?;
-        let format = schema_attrs
-            .format
-            .as_deref()
-            .unwrap_or_default()
-            .parse()
-            .unwrap_or_default();
+
+    if let Some(ty) = schema_attrs.r#type {
+        let format = schema_attrs.format;
 
         // Validate type and format combination
-        if !r#type.is_compatible_with(format) {
-            return Err(Error::new(
-                ty.span(),
-                format!("format `{format}` not supported for SchemaType::{type}"),
-            ));
+        if let Some(format) = format {
+            if !ty.value().is_compatible_with(format.value()) {
+                let mut err = ty.error(format!("`{format}` is not compatible with {ty}"));
+                let err_format = format.error(format!("`{format}` is not compatible with {ty}"));
+
+                err.combine(err_format);
+                return Err(err)
+            }
         }
 
         Ok(Schema {
-            r#type: Some(r#type),
-            format: Some(format),
+            r#type: Some(ty.into_inner()),
+            format: format.map(|c|c.into_inner()),
             description,
             nullable,
             max_items,
@@ -767,9 +808,9 @@ fn generate_item_schema(
         })
     } else {
         let base = if let Some(as_schema) = &schema_attrs.as_schema {
-            BaseSchema::AsSschema(as_schema.parse()?)
+            BaseSchema::AsSschema(as_schema.clone())
         } else if let Some(as_schema_generic) = &schema_attrs.as_schema_generic {
-            BaseSchema::AsSschemaGeneric(as_schema_generic.parse()?, item_ty.clone())
+            BaseSchema::AsSschemaGeneric(as_schema_generic.clone(), item_ty.clone())
         } else {
             ctx.constrain(item_ty);
             BaseSchema::Type(item_ty.clone())
@@ -789,7 +830,7 @@ fn generate_item_schema(
 const IS_ENUM: bool = true;
 
 fn prepare_rename_all(top_attr: &TopAttr, is_enum: bool) -> Result<Option<RenameAll>, Error> {
-    if let Some(style) = top_attr.rename_all.as_deref() {
+    if let Some(style) = top_attr.rename_all {
         if let Some(ref rename_all_with) = top_attr.rename_all_with {
             return Err(Error::new(
                 rename_all_with.span(), // The whole Attribute should be spanned
@@ -802,9 +843,9 @@ fn prepare_rename_all(top_attr: &TopAttr, is_enum: bool) -> Result<Option<Rename
         } else {
             attr::rename_all(style)
         };
-        Ok(rename_all.map(RenameAll::RenameAll))
+        Ok(Some(RenameAll::RenameAll(rename_all)))
     } else if let Some(ref rename_all_with) = top_attr.rename_all_with {
-        Ok(Some(RenameAll::RenameWith(rename_all_with.parse()?)))
+        Ok(Some(RenameAll::RenameWith(rename_all_with.clone())))
     } else {
         Ok(None)
     }
@@ -817,6 +858,7 @@ enum RenameAll {
 }
 
 fn rename_item(rename_all: Option<&RenameAll>, item_name: &str, item_attr: &Attr) -> Value<String> {
+    // Apply the rename attribute on the item or fallback to the cont_attr rename_all or the original name 
     macro_rules! or_rename {
         ($f:expr) => {
             if let Some(ref rename) = item_attr.rename {
@@ -1269,7 +1311,7 @@ mod test {
                     }
                 }
             } else {
-                let derived = derived.unwrap_or_else(|err| panic!("test failed: {err}"));
+                let derived = derived.unwrap_or_else(|err| panic!("test failed: {err:#?}"));
                 assert_eq!(derived.schema, test.want.unwrap())
             }
         }

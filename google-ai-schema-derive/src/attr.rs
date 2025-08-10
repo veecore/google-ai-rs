@@ -21,84 +21,137 @@
 //! `ignore_serde` in struct attributes.
 
 use std::{
-    collections::HashMap,
-    fmt::Debug,
-    ops::{Deref, DerefMut},
+    fmt::{Debug, Display, Write as _},
+    ops::Deref,
+    str::FromStr,
 };
 
+use case::Case;
 use proc_macro2::Span;
-use syn::{Attribute, Error};
+use syn::{meta::ParseNestedMeta, parse::Parse, Attribute, Error};
+
+// see as a method on SetAttr
+macro_rules! get_attrs {
+    ($set:ident => {
+        $(
+            let $attr:ident $(as $attr_as:tt)? $(= $val:expr)?; // Type-inference can do most of the job
+        )*
+    }) => {
+        $(
+            // not storing $val will cause unnecessary re-computing
+            //
+            // wouldn't have been a tuple if we had paste to give the fn a new name
+            let mut $attr = (None, get_attrs!(@unwrap_or $($val)?, new_attr()));
+        )*
+
+        for attr in $set.attrs {
+            if attr.path().is_ident($set.owner) {
+                attr.parse_nested_meta(|meta| {
+                    if let Some(ident) = meta.path.get_ident() {
+                        let s_attr = ident.to_string();
+                        let s_attr = s_attr.as_str();
+
+                        if !$set.is_finding && $set.is_disallowed(&s_attr) {
+                            return Err(meta.error(format!(
+                                "Disallowed schema attribute {s_attr}. Allowed attributes include: {}",
+                                $set.attr_for_error(&mut [$(get_attrs!(@unwrap_or $($attr_as)?, stringify!($attr))),*])
+                            )))
+                        }
+
+                        $(
+                            if s_attr == get_attrs!(@unwrap_or $($attr_as)?, stringify!($attr)) {
+                                $attr.0 = ($attr.1)($attr.0.take(), &meta).map_err(|err| {
+                                    // FIXME
+                                    // let mut prefix = meta.error(format!("Schema attribute {s_attr}: "));
+                                    // prefix.combine(err);
+                                    // prefix
+                                    let msg = format!("Schema attribute {s_attr}: {err}");
+                                    Error::new(err.span(), msg)
+                                })?;
+                                return Ok(())
+                            }
+                        )*
+
+                        if !$set.is_finding {
+                            Err(meta.error(format!(
+                                "Unsupported schema attribute {s_attr}. Valid attributes include: {}",
+                                $set.attr_for_error(&mut [$(get_attrs!(@unwrap_or $($attr_as)?, stringify!($attr))),*])
+                            )))
+                        } else {
+                            Ok(())
+                        }
+                    } else {
+                        Ok(())
+                    }
+                }).or_else(|err| {
+                    // I don't understand either (see test unread_attribute)
+                    if $set.is_finding && err.to_string().contains("expected `,`") {
+                        Ok(())
+                    } else {
+                        Err(err)
+                    }
+                })?;
+            }
+        }
+
+        $(
+            let $attr = $attr.0;
+        )*
+    };
+    (@unwrap_or $val:expr, $alt:expr) => {$val};
+    (@unwrap_or , $alt:expr) => {$alt};
+
+    {@attr_as $attr_as:tt or $var:ident} => {$attr_as};
+    {@attr_as or $var:ident} => {stringify!($var)};
+}
 
 /// Top-level type attributes for schema generation
 #[derive(Default)]
 pub(crate) struct TopAttr {
     pub(crate) description: Option<String>,
-    pub(crate) ignore_serde: Option<bool>,
-    pub(crate) rename_all: Option<String>,
-    pub(crate) rename_all_with: Option<LitStr>,
-    pub(crate) crate_path: Option<LitStr>,
+    pub(crate) rename_all: Option<Case>,
+    pub(crate) rename_all_with: Option<syn::ExprPath>,
+    pub(crate) crate_path: Option<syn::Path>,
     pub(crate) nullable: Option<bool>,
+    pub(crate) ignore_serde: Option<bool>,
 }
 
 pub(crate) fn parse_top(attrs: &[Attribute]) -> Result<TopAttr, Error> {
-    parse_top_item::<0>(attrs, None)
-}
+    let attrs = SetAttr::new(attrs);
 
-fn parse_top_item<const N: usize>(
-    attrs: &[Attribute],
-    disallow: Option<[&'static str; N]>,
-) -> Result<TopAttr, Error> {
-    let mut want = SetAttributes::var([
-        "description",
-        "ignore_serde",
-        "rename_all",
-        "rename_all_with",
-        "crate_path",
-        "nullable",
-    ])
-    .allow_bool(["nullable", "ignore_serde"])
-    .only_allow_one_of("rename_all", case::SUPPORTED)
-    .disallow(disallow);
+    let rename_all_attr = new_attr::<syn::LitStr, Case>();
+    get_attrs! {
+        attrs => {
+            let description = new_attr_string_concat();
+            let rename_all = rename_all_attr;
+            let rename_all_with = new_attr_expr_path();
+            let crate_path = new_attr_path();
+            let nullable = new_attr_bool();
+            let ignore_serde = new_attr_bool();
+        }
+    }
 
-    want.get_attrs(attrs, "schema")?;
+    let mut any_rename_all = rename_all;
 
-    let description = want.extract("description")?;
-    let ignore_serde = want.extract_bool("ignore_serde")?;
-    let mut rename_all = want.extract("rename_all")?;
-    let rename_all_with = want.extract_literal("rename_all_with").map(Into::into);
-    let crate_path = want.extract_literal("crate_path").map(Into::into);
-    let nullable = want.extract_bool("nullable")?;
-
-    if ignore_serde.is_none() && rename_all.is_none() {
+    if ignore_serde.is_none_or(|ignore_serde| !ignore_serde) && any_rename_all.is_none() {
         // let's use serde's rename
-        want = want.re_var(["rename_all"]);
-        want.find_attrs(attrs, "serde")?;
-        rename_all = want.extract("rename_all")?;
+        let attrs = attrs.switch_to_serde();
+        get_attrs! {
+            attrs => {
+                let rename_all = rename_all_attr;
+            }
+        }
+        any_rename_all = rename_all;
     }
 
     Ok(TopAttr {
         description,
-        rename_all,
+        rename_all: any_rename_all,
         rename_all_with,
-        nullable,
         crate_path,
+        nullable,
         ignore_serde,
     })
-}
-
-#[derive(Debug, Default, PartialEq)]
-pub(crate) struct Attr {
-    pub(crate) description: Option<String>,
-    pub(crate) format: Option<String>,
-    pub(crate) r#type: Option<LitStr>,
-    pub(crate) as_schema: Option<LitStr>,
-    pub(crate) as_schema_generic: Option<LitStr>,
-    pub(crate) rename: Option<String>,
-    pub(crate) required: Option<bool>,
-    pub(crate) min_items: Option<i64>,
-    pub(crate) max_items: Option<i64>,
-    pub(crate) nullable: Option<bool>,
-    pub(crate) skip: Option<bool>,
 }
 
 pub(crate) struct LitStr(syn::LitStr);
@@ -115,15 +168,9 @@ impl PartialEq for LitStr {
     }
 }
 
-impl From<syn::LitStr> for LitStr {
-    fn from(value: syn::LitStr) -> Self {
-        LitStr(value)
-    }
-}
-
 impl From<&str> for LitStr {
     fn from(value: &str) -> Self {
-        syn::LitStr::new(value, Span::call_site()).into()
+        Self(syn::LitStr::new(value, Span::call_site()))
     }
 }
 
@@ -135,15 +182,30 @@ impl Deref for LitStr {
     }
 }
 
-pub(crate) fn parse_field(attrs: &[Attribute], ignore_serde: bool) -> Result<Attr, Error> {
-    parse_item::<0>(attrs, ignore_serde, None)
+#[derive(Debug, Default, PartialEq)]
+pub(crate) struct Attr {
+    pub(crate) description: Option<String>,
+    pub(crate) format: Option<Spanned<Format>>,
+    pub(crate) r#type: Option<Spanned<Type>>,
+    pub(crate) as_schema: Option<syn::ExprPath>,
+    pub(crate) as_schema_generic: Option<syn::ExprPath>,
+    pub(crate) rename: Option<String>,
+    pub(crate) required: Option<bool>,
+    pub(crate) min_items: Option<i64>,
+    pub(crate) max_items: Option<i64>,
+    pub(crate) nullable: Option<bool>,
+    pub(crate) skip: Option<bool>,
 }
 
-pub(crate) fn parse_enum(attrs: &[Attribute], ignore_serde: bool) -> Result<Attr, Error> {
+pub(crate) fn parse_field(attrs: &[Attribute], ignore_serde: bool) -> Result<Attr, Error> {
+    parse_item(attrs, ignore_serde, None)
+}
+
+pub(crate) fn parse_plain_enum(attrs: &[Attribute], ignore_serde: bool) -> Result<Attr, Error> {
     parse_item(
         attrs,
         ignore_serde,
-        Some([
+        Some(&[
             "description",
             "format",
             "r#type",
@@ -158,74 +220,59 @@ pub(crate) fn parse_enum(attrs: &[Attribute], ignore_serde: bool) -> Result<Attr
 }
 
 pub(crate) fn parse_tuple(attrs: &[Attribute], ignore_serde: bool) -> Result<Attr, Error> {
-    parse_item(attrs, ignore_serde, Some(["rename"]))
+    parse_item(attrs, ignore_serde, Some(&["rename"]))
 }
 
-fn parse_item<const N: usize>(
+fn parse_item(
     attrs: &[Attribute],
     ignore_serde: bool,
-    disallow: Option<[&'static str; N]>,
+    disallow: Option<&'static [&'static str]>,
 ) -> Result<Attr, Error> {
-    let mut want = SetAttributes::var([
-        "description",
-        "format",
-        "r#type",
-        "as_schema",
-        "as_schema_generic",
-        "rename",
-        "required",
-        "min_items",
-        "max_items",
-        "nullable",
-        "skip",
-    ])
-    .allow_bool(["required", "nullable", "skip"])
-    .only_allow_one_of(
-        "r#type",
-        [
-            "Unspecified",
-            "String",
-            "Number",
-            "Integer",
-            "Boolean",
-            "Array",
-            "Object",
-        ],
-    )
-    .only_allow_one_of("format", ["float", "double", "int32", "int64", "enum"])
-    .disallow(disallow);
+    let mut attrs = SetAttr::new(attrs);
+    if let Some(disallow) = disallow {
+        attrs = attrs.disallow(disallow);
+    }
 
-    want.get_attrs(attrs, "schema")?;
+    let rename_attr = new_attr();
+    let skip_attr = new_attr_bool();
+    get_attrs! {
+        attrs => {
+            let description = new_attr_string_concat();
+            let format;
+            let r#type;
+            let as_schema = new_attr_expr_path();
+            let as_schema_generic = new_attr_expr_path();
+            let rename = rename_attr;
+            let required = new_attr_bool();
+            let min_items;
+            let max_items;
+            let nullable = new_attr_bool();
+            let skip = skip_attr;
+        }
+    }
 
-    let description = want.extract("description")?;
-    let format = want.extract("format")?;
-    let r#type = want.extract_literal("r#type").map(Into::into);
-    let as_schema = want.extract_literal("as_schema").map(Into::into);
-    let as_schema_generic = want.extract_literal("as_schema_generic").map(Into::into);
-    let mut rename = want.extract("rename")?;
-    let required = want.extract_bool("required")?;
-    let min_items = want.extract_int("min_items")?;
-    let max_items = want.extract_int("max_items")?;
-    let nullable = want.extract_bool("nullable")?;
-    let mut skip = want.extract_bool("skip")?;
+    let mut any_rename = rename;
+    let mut any_skip = skip;
 
     if !ignore_serde {
-        // We should do it once or want will change before we get down
-        // and is_disallowed will be false
-
-        let get_rename = rename.is_none() && !want.is_disallowed("rename");
-        let get_skip = skip.is_none() && !want.is_disallowed("skip");
+        let get_rename = any_rename.is_none() && !attrs.is_disallowed(&"rename");
+        let get_skip = any_skip.is_none() && !attrs.is_disallowed(&"skip");
 
         if get_rename || get_skip {
-            want = want.re_var(["rename", "skip"]).allow_bool(["skip"]);
+            attrs = attrs.switch_to_serde();
+            get_attrs! {
+                attrs => {
+                    let rename = rename_attr;
+                    let skip = skip_attr;
+                }
+            };
 
-            want.find_attrs(attrs, "serde")?;
             if get_rename {
-                rename = want.extract("rename")?;
+                any_rename = rename;
             }
 
             if get_skip {
-                skip = want.extract_bool("skip")?
+                any_skip = skip
             }
         }
     }
@@ -236,317 +283,375 @@ fn parse_item<const N: usize>(
         r#type,
         as_schema,
         as_schema_generic,
-        rename,
+        rename: any_rename,
         required,
         min_items,
         max_items,
         nullable,
-        skip,
+        skip: any_skip,
     })
 }
 
-pub(super) fn find_attrs<const N: usize>(
-    set_attrs: [&'static str; N],
-    attrs: &[Attribute],
-    owner: &str,
-) -> Result<[Option<LitStr>; N], Error> {
-    let mut sa = SetAttributes::<0>::var(set_attrs);
-    sa.find_attrs(attrs, owner)?;
+// Just TryFrom
+pub trait TryFromParse<T>: Sized {
+    fn try_from_parse(parse: T) -> Result<Self, Error>;
 
-    let mut out = [const { None }; N];
-
-    for (i, set_attr) in set_attrs.iter().enumerate() {
-        out[i] = sa.extract_literal(set_attr).map(Into::into)
-    }
-    Ok(out)
-}
-
-#[derive(Debug, Clone, Copy)]
-enum ArgTaking {
-    Takes,
-    MayNot,
-    #[allow(unused)]
-    MustNot,
-}
-
-impl Default for ArgTaking {
-    fn default() -> Self {
-        Self::Takes
+    // FIXME: This shouldn't be T depenedent.
+    fn try_from_nothing() -> Result<Self, ()> {
+        Err(())
     }
 }
 
-enum Value {
-    LitStr(syn::LitStr),
-    Empty,
-}
-
-#[derive(Default)]
-struct AttrProp {
-    value: Option<Value>,
-    arg_taking: ArgTaking,
-    takes_one_of: Vec<&'static str>,
-}
-
-impl AttrProp {
-    fn one_of_for_error(&self) -> String {
-        format_possible_values(self.takes_one_of.iter().collect(), "or")
+impl<T: Parse> TryFromParse<T> for T {
+    fn try_from_parse(parse: T) -> Result<Self, Error> {
+        Ok(parse)
     }
 }
 
-struct SetAttributes<const K: usize>(HashMap<&'static str, AttrProp>, Option<[&'static str; K]>);
+// FIXME: Wasteful
+impl TryFromParse<syn::LitStr> for syn::ExprPath {
+    fn try_from_parse(parse: syn::LitStr) -> Result<Self, Error> {
+        parse.parse()
+    }
+}
 
-impl<const K: usize> SetAttributes<K> {
-    fn var<const N: usize>(attrs: [&'static str; N]) -> Self {
-        let mut m = HashMap::with_capacity(attrs.len());
-        for attr in attrs {
-            m.insert(attr, Default::default());
+// FIXME: Wasteful
+impl TryFromParse<syn::LitStr> for syn::Path {
+    fn try_from_parse(parse: syn::LitStr) -> Result<Self, Error> {
+        parse.parse()
+    }
+}
+
+impl TryFromParse<syn::LitInt> for i64 {
+    fn try_from_parse(parse: syn::LitInt) -> Result<Self, Error> {
+        parse.base10_parse()
+    }
+}
+
+impl TryFromParse<syn::LitStr> for LitStr {
+    fn try_from_parse(parse: syn::LitStr) -> Result<Self, Error> {
+        Ok(LitStr(parse))
+    }
+}
+
+impl TryFromParse<syn::LitStr> for String {
+    fn try_from_parse(parse: syn::LitStr) -> Result<Self, Error> {
+        Ok(parse.value())
+    }
+}
+
+impl TryFromParse<syn::LitBool> for bool {
+    fn try_from_parse(parse: syn::LitBool) -> Result<Self, Error> {
+        Ok(parse.value)
+    }
+
+    fn try_from_nothing() -> Result<Self, ()> {
+        // Presence is taken as truthiness
+        Ok(true)
+    }
+}
+
+impl TryFromParse<syn::LitStr> for bool {
+    fn try_from_parse(parse: syn::LitStr) -> Result<Self, Error> {
+        parse
+            .value()
+            .parse()
+            .map_err(|_| Error::new(parse.span(), "Expected one of \"true\" or \"false\""))
+    }
+
+    fn try_from_nothing() -> Result<Self, ()> {
+        // Presence is taken as truthiness
+        Ok(true)
+    }
+}
+
+#[derive(Copy, Clone, Debug)]
+pub struct Spanned<T> {
+    inner: T,
+    span: Span,
+}
+
+impl<T> Display for Spanned<T>
+where
+    T: Display,
+{
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.inner.fmt(f)
+    }
+}
+
+impl<T> Spanned<T> {
+    pub fn error(&self, message: impl Display) -> Error {
+        Error::new(self.span, message)
+    }
+
+    pub fn into_inner(self) -> T {
+        self.inner
+    }
+
+    #[allow(dead_code)]
+    pub fn span(&self) -> Span {
+        self.span
+    }
+}
+
+impl<T> Spanned<T>
+where
+    T: Copy,
+{
+    pub fn value(&self) -> T {
+        self.inner
+    }
+}
+
+impl<T> PartialEq<Spanned<T>> for Spanned<T>
+where
+    T: PartialEq,
+{
+    fn eq(&self, other: &Spanned<T>) -> bool {
+        self.inner == other.inner
+    }
+}
+
+impl<P, T> TryFromParse<P> for Spanned<T>
+where
+    P: Parse + syn::spanned::Spanned,
+    T: TryFromParse<P>,
+{
+    fn try_from_parse(parse: P) -> Result<Self, Error> {
+        Ok(Self {
+            span: parse.span(),
+            inner: T::try_from_parse(parse)?,
+        })
+    }
+
+    fn try_from_nothing() -> Result<Self, ()> {
+        T::try_from_nothing().map(|inner| Self {
+            inner,
+            span: Span::call_site(),
+        })
+    }
+}
+
+impl<T> FromStr for Spanned<T>
+where
+    T: FromStr,
+{
+    type Err = T::Err;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Ok(Self {
+            inner: T::from_str(s)?,
+            span: Span::call_site(),
+        })
+    }
+}
+
+fn new_attr<F, T>() -> impl Fn(Option<T>, &ParseNestedMeta<'_>) -> Result<Option<T>, Error> + Copy
+where
+    F: Parse,
+    T: TryFromParse<F>,
+{
+    |former, new_value| {
+        if former.is_some() {
+            return Err(new_value.error("Multiple values not supported"));
         }
-        Self(m, None)
-    }
-
-    // re_var clears all former variables and disallows
-    fn re_var<const N: usize>(mut self, attrs: [&'static str; N]) -> Self {
-        self.clear();
-        self.1 = None;
-
-        for attr in attrs {
-            self.insert(attr, Default::default());
-        }
-        self
-    }
-
-    fn disallow(mut self, disallow: Option<[&'static str; K]>) -> Self {
-        if let Some(disallow) = disallow {
-            for attr in disallow {
-                _ = self.remove(attr);
-            }
-        }
-
-        self.1 = disallow;
-        self
-    }
-
-    fn is_disallowed(&self, attr: &str) -> bool {
-        if let Some(ref d) = self.1 {
-            d.contains(&attr)
-        } else {
-            false
-        }
-    }
-
-    #[allow(unused)]
-    fn disallow_argument<const N: usize>(mut self, attrs: [&'static str; N]) -> Self {
-        for attr in attrs {
-            self.get_mut(&attr)
-                .unwrap_or_else(|| panic!("{attr} should exist"))
-                .arg_taking = ArgTaking::MustNot
-        }
-
-        self
-    }
-
-    fn allow_bool<const N: usize>(mut self, attrs: [&'static str; N]) -> Self {
-        for attr in attrs {
-            self = self.allow_one_of_(attr, ["true", "false"], true)
-        }
-
-        self
-    }
-
-    fn only_allow_one_of<const N: usize>(self, attr: &str, one_ofs: [&'static str; N]) -> Self {
-        self.allow_one_of_(attr, one_ofs, false)
-    }
-
-    fn allow_one_of_<const N: usize>(
-        mut self,
-        attr: &str,
-        one_ofs: [&'static str; N],
-        maybe_empty: bool,
-    ) -> Self {
-        let a = self
-            .get_mut(attr)
-            .unwrap_or_else(|| panic!("{attr} should exist"));
-        if maybe_empty {
-            a.arg_taking = ArgTaking::MayNot;
-        }
-        a.takes_one_of = one_ofs.to_vec();
-
-        self
-    }
-
-    fn extract_int(&mut self, name: &str) -> Result<Option<i64>, Error> {
-        if let Some(v) = self.extract_literal(name) {
-            v.value()
+        match new_value.value() {
+            Ok(v) => v
                 .parse()
-                .map_err(|err| Error::new(v.span(), format!("schema attribute {name}: {err}")))
+                .map_err(|err| new_value.error(format!("Error parsing value: {err}")))
+                .map(|f| T::try_from_parse(f))
+                .and_then(|r| r.map(Some)),
+            Err(_) => T::try_from_nothing()
                 .map(Some)
-        } else {
-            Ok(None)
+                .map_err(|_| new_value.error("Argument required")),
         }
-    }
-
-    fn extract_bool(&mut self, name: &str) -> Result<Option<bool>, Error> {
-        Ok(self.extract(name)?.map(|v| v.to_lowercase() != *"false"))
-    }
-
-    fn extract_literal(&mut self, name: &str) -> Option<syn::LitStr> {
-        if let Some(attr_prop) = self.extract_attr_prop(name) {
-            match attr_prop.value {
-                Some(Value::LitStr(lit)) => Some(lit),
-                None => None,
-                _ => panic!("{name} is not syn::LitStr"),
-            }
-        } else {
-            None
-        }
-    }
-
-    fn extract(&mut self, name: &str) -> Result<Option<String>, Error> {
-        if let Some(attr_prop) = self.extract_attr_prop(name) {
-            match &attr_prop.value {
-                Some(Value::LitStr(lit)) => {
-                    let value = lit.value();
-                    if attr_prop.takes_one_of.is_empty()
-                        || attr_prop.takes_one_of.contains(&value.as_str())
-                    {
-                        Ok(Some(value))
-                    } else {
-                        Err(Error::new(
-                            lit.span(),
-                            format!(
-                                "schema attribute {} only takes one of: {}",
-                                name,
-                                attr_prop.one_of_for_error()
-                            ),
-                        ))
-                    }
-                }
-                Some(Value::Empty) => Ok(Some(String::new())),
-                None => Ok(None),
-            }
-        } else {
-            Ok(None)
-        }
-    }
-
-    fn extract_attr_prop(&mut self, name: &str) -> Option<AttrProp> {
-        if self.1.is_some_and(|disallow| disallow.contains(&name)) {
-            if self.contains_key(name) {
-                panic!("unexpected attribute {name}");
-            }
-            return None;
-        }
-
-        Some(
-            self.remove(name)
-                .unwrap_or_else(|| panic!("{name} should exist")),
-        )
-    }
-
-    fn find_attrs(&mut self, attrs: &[Attribute], owner: &str) -> Result<(), Error> {
-        if let Err(err) = self.get_attrs_(attrs, owner, true) {
-            // I don't understand either (see test unread_attribute)
-            if err.to_string().contains("expected `,`") {
-                Ok(())
-            } else {
-                Err(err)
-            }
-        } else {
-            Ok(())
-        }
-    }
-
-    fn get_attrs(&mut self, attrs: &[Attribute], owner: &str) -> Result<(), Error> {
-        self.get_attrs_(attrs, owner, false)
-    }
-
-    fn get_attrs_(&mut self, attrs: &[Attribute], owner: &str, finding: bool) -> Result<(), Error> {
-        for attr in attrs {
-            if attr.path().is_ident(owner) {
-                attr.parse_nested_meta(|meta| {
-                    if let Some(ident) = meta.path.get_ident() {
-                        let s_attr = ident.to_string();
-                        if let Some(attr_prop) = self.get_mut(s_attr.as_str()) {
-                            match (meta.value(), attr_prop.arg_taking) {
-                                (Ok(value), ArgTaking::Takes | ArgTaking::MayNot) => {
-                                    attr_prop.value = Some(Value::LitStr(value.parse()?));
-                                }
-                                (Ok(_), ArgTaking::MustNot) => {
-                                    return Err(meta.error(format!(
-                                        "schema attribute {s_attr} takes no argument"
-                                    )))
-                                }
-                                (Err(_), ArgTaking::Takes) => {
-                                    return Err(meta.error(format!(
-                                        "schema attribute {s_attr} needs argument"
-                                    )))
-                                }
-                                (Err(_), ArgTaking::MayNot | ArgTaking::MustNot) => {
-                                    attr_prop.value = Some(Value::Empty)
-                                }
-                            };
-                        } else if !finding {
-                            return Err(meta.error(format!(
-                                "{} schema attribute {s_attr}. Valid attributes include: {}.",
-                                if self.is_disallowed(s_attr.as_str()) {
-                                    "disallowed"
-                                } else {
-                                    "unsupported"
-                                },
-                                self.attr_for_error()
-                            )));
-                        }
-                    };
-                    Ok(())
-                })?;
-            }
-        }
-        Ok(())
-    }
-
-    fn attr_for_error(&self) -> String {
-        format_possible_values(self.keys().collect::<Vec<_>>(), "and")
     }
 }
 
-fn format_possible_values(mut ps: Vec<&&str>, and_or: &str) -> String {
+fn new_attr_string_concat(
+) -> impl Fn(Option<String>, &ParseNestedMeta<'_>) -> Result<Option<String>, Error> {
+    let base = new_attr::<syn::LitStr, String>();
+
+    move |former, new_value| {
+        base(None, new_value).map(|new| match (former, new) {
+            (None, Some(new)) => Some(new),
+            (Some(former), None) => Some(former),
+            (Some(former), Some(new)) => {
+                if new.is_empty() {
+                    // Like doc
+                    Some(format!("{former}\n{new}"))
+                } else {
+                    Some(format!("{former}{new}"))
+                }
+            },
+            _ => None,
+        })
+    }
+}
+
+fn new_attr_any2<V: Parse, V1: Parse, T>(
+) -> impl Fn(Option<T>, &ParseNestedMeta<'_>) -> Result<Option<T>, Error> + Copy
+where
+    T: Clone,
+    T: TryFromParse<V>,
+    T: TryFromParse<V1>,
+{
+    let from_v = new_attr::<V, T>();
+    let from_v1 = new_attr::<V1, T>();
+
+    move |former, new_value| {
+        #[allow(dead_code)]
+        struct ParseNestedMetaE<'a> {
+            pub path: syn::Path,
+            pub input: syn::parse::ParseStream<'a>,
+        }
+
+        let fork = new_value.input.fork();
+        from_v(former.clone(), new_value).or_else(|_| {
+            from_v1(former, unsafe {
+                &std::mem::transmute::<ParseNestedMetaE, ParseNestedMeta>(ParseNestedMetaE {
+                    path: new_value.path.clone(),
+                    input: &fork,
+                })
+            })
+        })
+    }
+}
+
+fn new_attr_bool(
+) -> impl Fn(Option<bool>, &ParseNestedMeta<'_>) -> Result<Option<bool>, Error> + Copy {
+    new_attr_any2::<syn::LitStr, syn::LitBool, bool>()
+}
+
+// FIXME
+fn new_attr_expr_path(
+) -> impl Fn(Option<syn::ExprPath>, &ParseNestedMeta<'_>) -> Result<Option<syn::ExprPath>, Error> + Copy
+{
+    new_attr_any2::<syn::LitStr, syn::ExprPath, syn::ExprPath>()
+}
+
+// FIXME
+pub(crate) fn new_attr_path(
+) -> impl Fn(Option<syn::Path>, &ParseNestedMeta<'_>) -> Result<Option<syn::Path>, Error> + Copy {
+    new_attr_any2::<syn::LitStr, syn::Path, syn::Path>()
+}
+
+#[derive(Debug)]
+pub struct SetAttr<'a> {
+    attrs: &'a [Attribute],
+    // Disallowed attributes
+    disallow: &'static [&'static str],
+    owner: &'static str,
+    is_finding: bool,
+}
+
+impl<'a> SetAttr<'a> {
+    pub fn new(attrs: &'a [Attribute]) -> Self {
+        Self {
+            attrs,
+            disallow: &[],
+            owner: "schema",
+            is_finding: false,
+        }
+    }
+
+    fn disallow(mut self, disallow: &'static [&str]) -> Self {
+        self.disallow = disallow;
+        self
+    }
+
+    fn is_disallowed(&self, attr: &&str) -> bool {
+        self.disallow.contains(attr)
+    }
+
+    fn owner(mut self, owner: &'static str) -> Self {
+        self.owner = owner;
+        self
+    }
+
+    fn finding(mut self) -> Self {
+        self.is_finding = true;
+        self
+    }
+
+    pub fn switch_to_serde(self) -> Self {
+        self.owner("serde").finding()
+    }
+
+    // filter away the disallowed ones
+    fn attr_for_error(&self, all: &mut [&str]) -> impl Display {
+        // FIXME: move disallowed down so we can view allowed part while also sorting
+        let mut allowed = all
+            .iter()
+            .filter(|v| !self.is_disallowed(v))
+            .collect::<Vec<_>>();
+        format_possible_values(&mut allowed, "and")
+    }
+
+    pub fn get_attr_fn<T>(
+        &self,
+        attr: &'static str,
+        f: impl Fn(Option<T>, &ParseNestedMeta<'_>) -> Result<Option<T>, Error>,
+    ) -> Result<Option<T>, Error> {
+        get_attrs! {
+            self => {
+                let attr_var as attr = f;
+            }
+        }
+
+        Ok(attr_var)
+    }
+
+    pub fn find_serde_crate(attrs: &'a [Attribute]) -> Result<Option<syn::Path>, Error> {
+        const SERDE_PATH_ATTR: &str = "crate"; // right?
+
+        Self::new(attrs)
+            .switch_to_serde()
+            .get_attr_fn(SERDE_PATH_ATTR, new_attr_path())
+    }
+}
+
+pub(crate) fn format_possible_values<V>(ps: &mut [V], and_or: &str) -> String
+where
+    V: Display + Ord,
+{
     let mut out = String::new();
     ps.sort();
 
-    let len = ps.len() as i64;
+    let len = ps.len();
     for (i, p) in ps.iter().enumerate() {
-        out.push('`');
-        out.push_str(p);
-        out.push('`');
+        write!(&mut out, "`{p}`").unwrap();
 
-        if i as i64 == len - 2 {
-            out.push_str(", ");
-            out.push_str(and_or);
-            out.push(' ');
-        } else if i as i64 != len - 1 {
-            out.push_str(", ");
+        // Only apply ',' if there's something ahead
+        if i + 1 < len {
+            write!(&mut out, ", ").unwrap();
+        }
+
+        // Now, if we're the penultimate...
+        // must be below writing of ', ' so we get ', {and_or} {value}'
+        if i + 2 == len {
+            write!(&mut out, "{and_or} ").unwrap();
         }
     }
     out
 }
 
-impl<const K: usize> Deref for SetAttributes<K> {
-    type Target = HashMap<&'static str, AttrProp>;
-
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-
-impl<const K: usize> DerefMut for SetAttributes<K> {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.0
-    }
+pub(crate) fn unknown_one_of_error<P, T, V>(value: V, valid: &mut [P], target: T) -> impl Display
+where
+    P: Display + Ord,
+    T: Display,
+    V: Display,
+{
+    format!(
+        "Unknown value {value} for {target}. Valid values include: {}",
+        format_possible_values(valid, "and")
+    )
 }
 
 #[cfg(test)]
 mod test {
-    use crate::attr::{parse_enum, parse_field, Attr};
+    use crate::attr::{parse_field, parse_plain_enum, Attr};
     use syn::{parse_quote, Attribute, Data, DataStruct, Fields};
 
     #[test]
@@ -565,7 +670,7 @@ mod test {
                         if ident == "what_I_want" {
                             unimplemented!();
                         }
-                        // If we Err here, we won't get the error
+                        // If we Err or consume the value here, we won't get the error
                     };
                     Ok(())
                 })
@@ -594,7 +699,7 @@ mod test {
                     field: String
                 }},
                 should_fail: true,
-                error_like: Some(vec!["only takes one of", "true", "false"]),
+                error_like: Some(vec!["boolean", "true", "false"]),
                 is_enum: false,
             },
             Test {
@@ -624,7 +729,7 @@ mod test {
                     field: String
                 }},
                 should_fail: true,
-                error_like: Some(vec!["needs argument"]),
+                error_like: Some(vec!["argument"]),
                 is_enum: false,
             },
             Test {
@@ -654,7 +759,7 @@ mod test {
                     field: String
                 }},
                 should_fail: true,
-                error_like: Some(vec!["needs argument"]),
+                error_like: Some(vec!["argument"]),
                 is_enum: false,
             },
             Test {
@@ -685,7 +790,7 @@ mod test {
             let first_field_attrs = &get_fields_attrs(test.input)[0];
 
             let r = if test.is_enum {
-                parse_enum(first_field_attrs, false)
+                parse_plain_enum(first_field_attrs, false)
             } else {
                 parse_field(first_field_attrs, false)
             };
@@ -696,7 +801,8 @@ mod test {
                     Err(err) => {
                         if let Some(error_like) = test.error_like {
                             let mut matches = false;
-                            let err = err.to_string();
+                            // err.to_string only gives the first message
+                            let err = err.into_compile_error().to_string().to_lowercase();
 
                             for like in error_like {
                                 matches = matches || err.contains(like)
@@ -707,7 +813,7 @@ mod test {
                     }
                 }
             } else if let Err(err) = r {
-                panic!("test failed: {err}");
+                panic!("test failed: {err:#?}");
             }
         }
     }
@@ -742,12 +848,12 @@ mod test {
                         ..Default::default()
                     },
                     Attr {
-                        r#type: Some("String".into()),
+                        r#type: Some("String".parse().unwrap()),
                         ..Default::default()
                     },
                     Attr {
-                        r#type: Some("Number".into()),
-                        format: Some("float".to_string()),
+                        r#type: Some("Number".parse().unwrap()),
+                        format: Some("float".parse().unwrap()),
                         ..Default::default()
                     },
                 ],
@@ -780,6 +886,77 @@ mod test {
                     ..Default::default()
                 }],
             },
+            Test {
+                title: "boolean",
+                input: parse_quote! {struct S {
+                    #[schema(skip)]
+                    rgb: String,
+                    #[schema(nullable = true)]
+                    nn: I,
+                    #[schema(skip = "false")]
+                    ff: F
+                }},
+                want: vec![
+                    Attr {
+                        skip: Some(true),
+                        ..Default::default()
+                    },
+                    Attr {
+                        nullable: Some(true),
+                        ..Default::default()
+                    },
+                    Attr {
+                        skip: Some(false),
+                        ..Default::default()
+                    },
+                ],
+            },
+            Test {
+                title: "description",
+                input: parse_quote! {struct S {
+                    #[schema(description = "Line 1")]
+                    #[schema(description = "")]
+                    #[schema(description = "Line 2")]
+
+                    rgb: String,
+                }},
+                want: vec![Attr {
+                    description: Some("Line 1\nLine 2".to_string()),
+                    ..Default::default()
+                }],
+            },
+            Test {
+                title: "description -(1)",
+                input: parse_quote! {struct S {
+                    #[schema(description = "Line 1 ")]
+                    #[schema(description = "Line 2")]
+
+                    rgb: String,
+                }},
+                want: vec![Attr {
+                    description: Some("Line 1 Line 2".to_string()),
+                    ..Default::default()
+                }],
+            },
+            Test {
+                title: "ExprPath - FIXME(tired)",
+                input: parse_quote! {struct S {
+                    #[schema(as_schema = "crate::module::function")]
+                    rgb: String,
+                    // FIXME:
+                    // #[schema(as_schema_generic = crate::module::function)]
+                    // rgb_: String,
+                }},
+                want: vec![
+                    Attr {
+                        as_schema: Some(parse_quote!(crate::module::function)),
+                        ..Default::default()
+                    }, /*, Attr {
+                           as_schema_generic: Some(parse_quote!(crate::module::function)),
+                           ..Default::default()
+                       }*/
+                ],
+            },
         ];
 
         for test in tests {
@@ -790,7 +967,7 @@ mod test {
             for (ith, field_attrs) in fields_attrs.iter().enumerate() {
                 match parse_field(field_attrs, false) {
                     Ok(attr) => assert_eq!(&attr, &test.want[ith]),
-                    Err(err) => panic!("test failed: {err}"),
+                    Err(err) => panic!("test failed: {err:#?}"),
                 };
             }
         }
@@ -822,17 +999,92 @@ mod test {
 
 pub(crate) use case::{rename_all, rename_all_variants};
 
+use crate::{schema::Type, Format};
+
 mod case {
-    pub(crate) static SUPPORTED: [&str; 8] = [
-        "camelCase",
-        "snake_case",
-        "lowercase",
-        "UPPERCASE",
-        "PascalCase",
-        "SCREAMING_SNAKE_CASE",
-        "kebab-case",
-        "SCREAMING-KEBAB-CASE",
-    ];
+    macro_rules! declare_enum_attr {
+        (
+            $(#[$meta:meta])*
+            $vis:vis enum $ty:ident = $ty_parallel:ident {
+                $(
+                    $(#[$v_meta:meta])*
+                    $variant:ident = $val:literal
+                ),*
+            }
+        ) => {
+            $(#[$meta])*
+            $vis enum $ty {
+                $(
+                    $(#[$v_meta])*
+                    $variant
+                ),*
+            }
+
+            impl $crate::attr::TryFromParse<syn::LitStr> for $ty {
+                fn try_from_parse(parse: syn::LitStr) -> Result<Self, syn::Error> {
+                    let value = parse.value();
+                    let span = parse.span();
+                    value.parse().map_err(|_| {
+                        let err = $crate::attr::unknown_one_of_error(value, &mut [$($val),*], stringify!($ty_parallel));
+                        syn::Error::new(span, err)
+                    })
+                }
+            }
+
+            impl std::str::FromStr for $ty {
+                type Err = $crate::schema::UnknownVariant;
+
+                fn from_str(s: &str) -> Result<Self, Self::Err> {
+                    match s {
+                        $(
+                            $val => Ok(Self::$variant),
+                        )*
+                        _ => Err($crate::schema::UnknownVariant)
+                    }
+                }
+            }
+
+            impl std::fmt::Display for $ty {
+                fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                    match self {
+                        $(
+                            Self::$variant => f.write_str($val),
+                        )*
+                    }
+                }
+            }
+        }
+    }
+
+    declare_enum_attr! {
+        #[derive(Copy, Clone, Debug)]
+        pub enum Case = Case {
+            Camel = "camelCase",
+            Snake = "snake_case",
+            Lower = "lowercase",
+            Upper = "UPPERCASE",
+            Pascal = "PascalCase",
+            ScreamingSnake = "SCREAMING_SNAKE_CASE",
+            Kebab = "kebab-case",
+            ScreamingKebab = "SCREAMING-KEBAB-CASE"
+        }
+    }
+
+    // This is to avoid heap-alloc in to_ascii_* and for convenience
+    trait StrExt {
+        fn to_ascii_lowercase_iter(self) -> impl Iterator<Item = char>;
+        fn to_ascii_uppercase_iter(self) -> impl Iterator<Item = char>;
+    }
+
+    impl StrExt for &str {
+        fn to_ascii_lowercase_iter(self) -> impl Iterator<Item = char> {
+            self.chars().map(|c| c.to_ascii_lowercase())
+        }
+
+        fn to_ascii_uppercase_iter(self) -> impl Iterator<Item = char> {
+            self.chars().map(|c| c.to_ascii_uppercase())
+        }
+    }
 
     struct PascalCase;
 
@@ -845,13 +1097,12 @@ mod case {
             let parts = Self::tokenize(name);
             let mut out = String::new();
 
-            for (i, part) in parts.iter().enumerate() {
+            for (i, part) in parts.enumerate() {
                 if i == 0 {
-                    out.push_str(&part.to_ascii_lowercase());
+                    out.extend(part.to_ascii_lowercase_iter());
                 } else {
-                    out.push_str(
-                        &(part[..1].to_ascii_uppercase() + &part[1..].to_ascii_lowercase()),
-                    );
+                    out.extend(part[..1].to_ascii_uppercase_iter());
+                    out.extend(part[1..].to_ascii_lowercase_iter());
                 }
             }
 
@@ -862,78 +1113,82 @@ mod case {
             let parts = Self::tokenize(name);
             let mut out = String::new();
 
-            if parts.is_empty() {
-                return out;
-            }
-
-            let last = parts.len() - 1;
-
-            for (i, part) in parts.iter().enumerate() {
-                out.push_str(&part.to_ascii_lowercase());
-
-                if i != last {
+            for (i, part) in parts.enumerate() {
+                if i != 0 {
                     out.push('_');
                 }
+                out.extend(part.to_ascii_lowercase_iter());
             }
 
             out
         }
 
-        fn tokenize(name: &str) -> Vec<&str> {
-            let mut out = Vec::new();
-            #[derive(Clone, Copy)]
-            #[allow(clippy::enum_variant_names)]
-            enum Last {
-                IsUpper,
-                IsLower,
-                IsPartFirst,
-            }
-            let mut last = Last::IsPartFirst;
-            let mut cursor = 0;
-            let mut current_part = 0;
-
-            macro_rules! new_part {
-                (0) => {{
-                    out.push(&name[..]);
-                    cursor = 0;
-                }};
-                ($i:tt, $cursor_incr:expr) => {{
-                    let new_cursor = ($i as i64 + $cursor_incr) as usize;
-                    out[current_part] = &name[cursor..new_cursor];
-                    out.push(&name[new_cursor..]);
-                    cursor = new_cursor;
-                    current_part += 1;
-                }};
+        fn tokenize(name: &str) -> impl Iterator<Item = &str> {
+            struct Parts<'a> {
+                residue: &'a str,
             }
 
-            for (i, c) in name.char_indices() {
-                let is_upper = c.is_uppercase();
-                match (i, is_upper, last) {
-                    (0, _, _) => {
-                        new_part!(0);
-                        continue;
+            impl<'a> Iterator for Parts<'a> {
+                type Item = &'a str;
+
+                fn next(&mut self) -> Option<Self::Item> {
+                    // We're always at the start of a new part
+                    let mut last_is_upper = true;
+
+                    let mut cursor = self.residue.len();
+                    for (i, c) in self.residue.char_indices() {
+                        let is_upper = c.is_uppercase();
+
+                        match (last_is_upper, is_upper) {
+                            // aA
+                            (false, true) => {
+                                cursor = i;
+                                break;
+                            }
+                            // AAa
+                            (true, false) => {
+                                // If there's something before last that must've been upper...
+                                // If it weren't, it'd have been popped in the branch above on getting
+                                // to last. So we check if we have at-least something before the last.
+                                if i > 1 {
+                                    cursor = i - 1;
+                                    break;
+                                }
+                            }
+                            // AA or aa
+                            _ => {}
+                        }
+
+                        last_is_upper = is_upper;
                     }
-                    (_, true, Last::IsLower) => {
-                        new_part!(i, 0);
-                        last = Last::IsPartFirst;
-                        continue;
-                    }
-                    (_, false, Last::IsUpper) => new_part!(i, -1),
-                    _ => {}
-                }
 
-                if is_upper {
-                    last = Last::IsUpper
-                } else {
-                    last = Last::IsLower
+                    // Must be above the overwrite
+                    let next = &self.residue[..cursor];
+                    self.residue = &self.residue[cursor..];
+
+                    if next.is_empty() {
+                        None
+                    } else {
+                        Some(next)
+                    }
                 }
             }
 
-            out
+            Parts { residue: name }
         }
 
         fn to_kebab_case(name: &str) -> String {
-            Self::to_snake_case(name).replace("_", "-")
+            let mut out = Self::to_snake_case(name);
+
+            unsafe {
+                out.as_mut_vec().iter_mut().for_each(|c| {
+                    if *c == b'_' {
+                        *c = b'-'
+                    }
+                })
+            };
+
+            out
         }
     }
 
@@ -950,7 +1205,8 @@ mod case {
             let mut out = String::new();
 
             for part in parts {
-                out.push_str(&(part[..1].to_ascii_uppercase() + &part[1..]));
+                out.extend(part[..1].to_ascii_uppercase_iter());
+                out.push_str(&part[1..]);
             }
 
             out
@@ -960,19 +1216,20 @@ mod case {
             let parts = Self::tokenize(name);
             let mut out = String::new();
 
-            for (i, part) in parts.iter().enumerate() {
+            for (i, part) in parts.enumerate() {
                 if i == 0 {
-                    out.push_str(&(part[..1].to_ascii_lowercase() + &part[1..]));
+                    out.extend(part[..1].to_ascii_lowercase_iter());
                 } else {
-                    out.push_str(&(part[..1].to_ascii_uppercase() + &part[1..]));
+                    out.extend(part[..1].to_ascii_uppercase_iter());
                 }
+                out.push_str(&part[1..]);
             }
 
             out
         }
 
-        fn tokenize(name: &str) -> Vec<&str> {
-            name.split('_').filter(|s| !s.is_empty()).collect()
+        fn tokenize(name: &str) -> impl Iterator<Item = &str> {
+            name.split('_').filter(|s| !s.is_empty())
         }
 
         fn to_kebab_case(name: &str) -> String {
@@ -1006,17 +1263,16 @@ mod case {
     macro_rules! rn_all {
         ($case:ident, $name:ident) => {
             #[allow(non_snake_case)]
-            pub(crate) fn $name(style: &str) -> Option<fn(&str) -> String> {
+            pub(crate) fn $name(style: Case) -> fn(&str) -> String {
                 match style {
-                    "camelCase" => Some($case::to_camel_case),
-                    "snake_case" => Some($case::to_snake_case),
-                    "lowercase" => Some(lowercase),
-                    "UPPERCASE" => Some(UPPERCASE),
-                    "PascalCase" => Some($case::to_pascal_case),
-                    "SCREAMING_SNAKE_CASE" => Some($case::SCREAMING_SNAKE_CASE),
-                    "kebab-case" => Some($case::to_kebab_case),
-                    "SCREAMING-KEBAB-CASE" => Some($case::SCREAMING_KEBAB_CASE),
-                    _ => None,
+                    Case::Camel => $case::to_camel_case,
+                    Case::Snake => $case::to_snake_case,
+                    Case::Lower => lowercase,
+                    Case::Upper => UPPERCASE,
+                    Case::Pascal => $case::to_pascal_case,
+                    Case::ScreamingSnake => $case::SCREAMING_SNAKE_CASE,
+                    Case::Kebab => $case::to_kebab_case,
+                    Case::ScreamingKebab => $case::SCREAMING_KEBAB_CASE,
                 }
             }
         };
@@ -1036,13 +1292,7 @@ mod case {
 
     #[cfg(test)]
     mod test {
-        use crate::attr::case::{snake_case, PascalCase};
-        #[allow(non_camel_case_types)]
-        enum Case {
-            camel,
-            snake,
-            Pascal,
-        }
+        use crate::attr::case::{snake_case, Case, PascalCase};
         #[test]
         fn from_snake() {
             struct Test {
@@ -1055,23 +1305,23 @@ mod case {
                 Test {
                     title: "leading delim",
                     input: "__private",
-                    wants: vec![(Case::camel, "private"), (Case::Pascal, "Private")],
+                    wants: vec![(Case::Camel, "private"), (Case::Pascal, "Private")],
                 },
                 Test {
                     title: "normal snake_case",
                     input: "hello_world",
-                    wants: vec![(Case::camel, "helloWorld"), (Case::Pascal, "HelloWorld")],
+                    wants: vec![(Case::Camel, "helloWorld"), (Case::Pascal, "HelloWorld")],
                 },
                 Test {
                     title: "`_` mayhem",
                     input: "__foo__Bar__",
-                    wants: vec![(Case::camel, "fooBar"), (Case::Pascal, "FooBar")],
+                    wants: vec![(Case::Camel, "fooBar"), (Case::Pascal, "FooBar")],
                 },
                 Test {
                     title: "alreadyCamel_alreadyCamel",
                     input: "alreadyCamel_alreadyCamel",
                     wants: vec![
-                        (Case::camel, "alreadyCamelAlreadyCamel"),
+                        (Case::Camel, "alreadyCamelAlreadyCamel"),
                         (Case::Pascal, "AlreadyCamelAlreadyCamel"),
                     ],
                 },
@@ -1079,7 +1329,7 @@ mod case {
                     title: "alreadyCamel",
                     input: "alreadyCamel",
                     wants: vec![
-                        (Case::camel, "alreadyCamel"),
+                        (Case::Camel, "alreadyCamel"),
                         (Case::Pascal, "AlreadyCamel"),
                     ],
                 },
@@ -1089,15 +1339,16 @@ mod case {
                 println!("{}", test.title);
                 for want in test.wants {
                     match want {
-                        (Case::camel, want) => {
+                        (Case::Camel, want) => {
                             assert_eq!(snake_case::to_camel_case(test.input), want)
                         }
-                        (Case::snake, want) => {
+                        (Case::Snake, want) => {
                             assert_eq!(snake_case::to_snake_case(test.input), want)
                         }
                         (Case::Pascal, want) => {
                             assert_eq!(snake_case::to_pascal_case(test.input), want)
                         }
+                        _ => unimplemented!(),
                     }
                 }
             }
@@ -1113,10 +1364,17 @@ mod case {
                 ("NormalPascal", vec!["Normal", "Pascal"]),
                 ("invalidPascal", vec!["invalid", "Pascal"]),
                 ("very_invalid_pascal", vec!["very_invalid_pascal"]),
+                (
+                    "NormalPascalLongerAJiGsAwTT",
+                    vec!["Normal", "Pascal", "Longer", "A", "Ji", "Gs", "Aw", "TT"],
+                ),
             ];
 
             for test in tests {
-                assert_eq!(PascalCase::tokenize(test.0), test.1)
+                assert_eq!(
+                    PascalCase::tokenize(test.0).into_iter().collect::<Vec<_>>(),
+                    test.1
+                )
             }
         }
 
@@ -1133,30 +1391,34 @@ mod case {
                 Test {
                     title: "consecutive capitals",
                     input: "HTTPRequest",
-                    wants: vec![(Case::snake, "http_request"), (Case::camel, "httpRequest")],
+                    wants: vec![(Case::Snake, "http_request"), (Case::Camel, "httpRequest")],
                 },
                 Test {
                     title: "consecutive capitals (1)",
                     input: "MyHTTPRequest",
-                    wants: vec![(Case::snake, "my_http_request")],
+                    wants: vec![(Case::Snake, "my_http_request")],
                 },
                 Test {
                     title: "consecutive capitals (2)",
                     input: "ABCdef",
-                    wants: vec![(Case::snake, "ab_cdef")],
+                    wants: vec![(Case::Snake, "ab_cdef")],
                 },
                 Test {
                     title: "consecutive capitals (3)",
                     input: "HTTPRequestAPI",
                     wants: vec![
-                        (Case::snake, "http_request_api"),
-                        (Case::camel, "httpRequestApi"),
+                        (Case::Snake, "http_request_api"),
+                        (Case::Camel, "httpRequestApi"),
                     ],
                 },
                 Test {
                     title: "normal PascalCase",
                     input: "HelloWorld",
-                    wants: vec![(Case::snake, "hello_world"), (Case::camel, "helloWorld")],
+                    wants: vec![
+                        (Case::Snake, "hello_world"),
+                        (Case::Camel, "helloWorld"),
+                        (Case::Kebab, "hello-world"),
+                    ],
                 },
             ];
 
@@ -1164,15 +1426,19 @@ mod case {
                 println!("{}", test.title);
                 for want in test.wants {
                     match want {
-                        (Case::camel, want) => {
+                        (Case::Camel, want) => {
                             assert_eq!(PascalCase::to_camel_case(test.input), want)
                         }
-                        (Case::snake, want) => {
+                        (Case::Snake, want) => {
                             assert_eq!(PascalCase::to_snake_case(test.input), want)
                         }
                         (Case::Pascal, want) => {
                             assert_eq!(PascalCase::to_pascal_case(test.input), want)
                         }
+                        (Case::Kebab, want) => {
+                            assert_eq!(PascalCase::to_kebab_case(test.input), want)
+                        }
+                        _ => todo!(),
                     }
                 }
             }

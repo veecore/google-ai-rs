@@ -1,6 +1,6 @@
 [package]
 name = "google-ai-schema-derive"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2021"
 authors = ["Victor <victorayo206@example.com>"]
 description = "Type-safe schema generation for Google AI API interactions"
