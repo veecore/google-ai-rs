@@ -9,7 +9,7 @@ Because guessing games don't belong in production AI systems!**
 
 ```toml
 [dependencies]
-google-ai-schema-derive = "0.1.1"
+google-ai-schema-derive = "0.1.2"
 ```
 
 ## ⚡️ 10-Second Schema Generation
