@@ -17,9 +17,7 @@ tonic = { version = "0.14.0", package = "tonic-veecore", default-features = fals
 prost = "0.14"
 prost-types = "0.14.1"
 tokio = { version = "1.44.1", features = ["rt-multi-thread", "macros", "net", "fs", "io-util", "time"] }
-# google-ai-schema-derive = "0.1.1"
-google-ai-schema-derive = {path = "../google-ai-schema-derive"}
-
+google-ai-schema-derive = "0.1.2"
 
 # --- Optional dependencies for the `jwt` feature ---
 rsa = { version = "0.9.8", features = ["sha2"], optional = true }
