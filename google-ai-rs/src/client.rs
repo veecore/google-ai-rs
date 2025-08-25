@@ -447,6 +447,15 @@ pub(crate) enum CClient<'a> {
     Borrowed(&'a Client),
 }
 
+impl CClient<'_> {
+    pub(crate) fn cloned<'a>(&'a self) -> CClient<'a> {
+        match self {
+            CClient::Shared(shared_client) => CClient::Borrowed(&shared_client),
+            CClient::Borrowed(client) => CClient::Borrowed(client),
+        }
+    }
+}
+
 #[allow(clippy::from_over_into)]
 impl Into<CClient<'static>> for SharedClient {
     fn into(self) -> CClient<'static> {

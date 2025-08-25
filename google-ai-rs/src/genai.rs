@@ -56,24 +56,27 @@ impl<T> Debug for TypedModel<'_, T> {
     }
 }
 
-// std is unstable
-struct PhantomInvariant<T>(std::marker::PhantomData<fn(T) -> T>);
-
-impl<T> From<std::marker::PhantomData<T>> for PhantomInvariant<T> {
-    fn from(_value: std::marker::PhantomData<T>) -> Self {
-        Self(std::marker::PhantomData)
+impl<T> Clone for TypedModel<'_, T> {
+    fn clone(&self) -> Self {
+        Self {
+            inner: self.inner.clone(),
+            _marker: PhantomInvariant(std::marker::PhantomData),
+        }
     }
 }
+
+// std is unstable
+struct PhantomInvariant<T>(std::marker::PhantomData<fn(T) -> T>);
 
 impl<'c, T> TypedModel<'c, T>
 where
     T: AsSchema,
 {
-    /// Creates a new typed model with schema validation.
+    /// Creates a new typed model configured to return responses of type `T`.
     ///
     /// # Arguments
-    /// - `client`: Authenticated API client
-    /// - `name`: Model name (e.g., "gemini-pro")
+    /// - `client`: Authenticated API client.
+    /// - `name`: Model name (e.g., "gemini-pro").
     pub fn new(client: &'c Client, name: &str) -> Self {
         let inner = GenerativeModel::new(client, name).as_response_schema::<T>();
         Self {
@@ -92,7 +95,8 @@ where
 
     /// Generates content with full response metadata.
     ///
-    /// Returns both parsed content and raw API response.
+    /// This method clones the model configuration and returns a `TypedResponse`,
+    /// containing both the parsed `T` and the raw API response.
     ///
     /// # Example
     /// ```rust,ignore
@@ -105,7 +109,8 @@ where
     ///     "Analyze NVDA stock performance",
     ///     "Consider PE ratio and recent earnings"
     /// )).await?;
-    /// println!("Analysis: {:?}", analysis);
+    /// println!("Analysis: {:?}", analysis.t);
+    /// println!("Token Usage: {:?}", analysis.raw.usage_metadata);
     /// # Ok(()) }
     /// ```
     #[inline]
@@ -114,16 +119,34 @@ where
         I: TryIntoContents + Send,
         T: TryFromCandidates + Send,
     {
-        let response = self.inner.generate_content(contents).await?;
+        self.cloned()
+            .generate_typed_content_consuming(contents)
+            .await
+    }
+
+    /// Generates content with metadata, consuming the model instance.
+    ///
+    /// An efficient alternative to `generate_typed_content` that avoids cloning
+    /// the model configuration, useful for one-shot requests.
+    #[inline]
+    pub async fn generate_typed_content_consuming<I>(
+        self,
+        contents: I,
+    ) -> Result<TypedResponse<T>, Error>
+    where
+        I: TryIntoContents + Send,
+        T: TryFromCandidates + Send,
+    {
+        let response = self.inner.generate_content_consuming(contents).await?;
         let t = T::try_from_candidates(&response.candidates)?;
         Ok(TypedResponse { t, raw: response })
     }
 
     /// Generates content and parses it directly into type `T`.
     ///
-    /// This is the primary method for most users wanting type-safe responses without
-    /// dealing with raw API structures. For 90% of use cases where you just want
-    /// structured data from the AI, this is what you need.
+    /// This is the primary method for most users wanting type-safe responses.
+    /// It handles all the details of requesting structured JSON and deserializing
+    /// it into your specified Rust type. It clones the model configuration to allow reuse.
     ///
     /// # Serde Integration
     /// When the `serde` feature is enabled, any type implementing `serde::Deserialize`
@@ -172,18 +195,57 @@ where
     /// ```
     ///
     /// # Errors
-    /// - [`Error::InvalidArgument`] if input validation fails
-    /// - [`Error::Service`] for model errors
-    /// - [`Error::Net`] for network failures
+    /// Returns an error if API communication fails or if the response cannot be
+    /// parsed into type `T`.
     #[inline]
     pub async fn generate_content<I>(&self, contents: I) -> Result<T, Error>
     where
         I: TryIntoContents + Send,
         T: TryFromCandidates + Send,
     {
-        let response = self.inner.generate_content(contents).await?;
+        self.cloned().generate_content_consuming(contents).await
+    }
+
+    #[inline]
+    pub async fn generate_content_consuming<I>(self, contents: I) -> Result<T, Error>
+    where
+        I: TryIntoContents + Send,
+        T: TryFromCandidates + Send,
+    {
+        let response = self.inner.generate_content_consuming(contents).await?;
         let t = T::try_from_candidates(&response.candidates)?;
         Ok(t)
+    }
+
+    /// Consumes the `TypedModel`, returning the underlying `GenerativeModel`.
+    ///
+    /// The returned `GenerativeModel` will retain the response schema configuration
+    /// that was set for type `T`.
+    pub fn into_inner(self) -> GenerativeModel<'c> {
+        self.inner
+    }
+
+    /// Creates a `TypedModel` from a `GenerativeModel` without validation.
+    ///
+    /// This is an advanced-use method that assumes the provided `GenerativeModel`
+    /// has already been configured with a response schema that is compatible with `T`.
+    ///
+    /// # Safety
+    /// The caller must ensure that `inner.generation_config.response_schema` is `Some`
+    /// and that its schema corresponds exactly to the schema of type `T`. Failure to
+    /// uphold this invariant will likely result in API errors or deserialization failures.
+    pub unsafe fn from_inner_unchecked(inner: GenerativeModel<'c>) -> Self {
+        Self {
+            inner,
+            _marker: PhantomInvariant(std::marker::PhantomData),
+        }
+    }
+
+    fn cloned(&self) -> TypedModel<'_, T> {
+        TypedModel {
+            inner: self.inner.cloned(),
+            _marker: PhantomInvariant(std::marker::PhantomData),
+        }
     }
 }
 
@@ -258,7 +320,7 @@ impl<T> DerefMut for TypedResponse<T> {
 /// ```
 #[derive(Clone, Debug)]
 pub struct GenerativeModel<'c> {
-    /// Backing API client
+    /// Backing API clienty
     pub(super) client: CClient<'c>,
     /// Fully qualified model name (e.g., "models/gemini-1.0-pro")
     model_name: Box<str>,
@@ -302,11 +364,18 @@ impl<'c> GenerativeModel<'c> {
         }
     }
 
+    /// Converts this `GenerativeModel` into a `TypedModel`.
+    ///
+    /// This prepares the model to return responses that are automatically
+    /// parsed into the specified type `T`.
     pub fn to_typed<T: AsSchema>(self) -> TypedModel<'c, T> {
         self.into()
     }
 
-    /// Generates content from flexible input types
+    /// Generates content from flexible input types.
+    ///
+    /// This method clones the model's configuration for the request, allowing the original
+    /// `GenerativeModel` instance to be reused.
     ///
     /// # Example
     /// ```
@@ -331,52 +400,73 @@ impl<'c> GenerativeModel<'c> {
     /// ```
     ///
     /// # Errors
-    /// Returns [`Error::InvalidArgument`] for empty input or invalid combinations.
-    /// [`Error::Service`] for model errors or [`Error::Net`] for transport failures
+    /// Returns [`Error::Service`] for model errors or [`Error::Net`] for transport failures.
     pub async fn generate_content<T>(&self, contents: T) -> Result<GenerateContentResponse, Error>
     where
         T: TryIntoContents,
     {
-        let contents = contents.try_into_contents()?;
-        if contents.is_empty() {
-            return Err(Error::InvalidArgument("Empty contents".into()));
-        }
+        self.cloned().generate_content_consuming(contents).await
+    }
 
-        let request = self.build_request(contents).await?;
-
-        self.client
-            .gc
-            .clone()
-            .generate_content(request)
+    /// Generates content by consuming the model instance.
+    ///
+    /// This is an efficient alternative to `generate_content` if you don't need to reuse the
+    /// model instance, as it avoids cloning the model's configuration. This is useful
+    /// for one-shot requests where the model is built, used, and then discarded.
+    pub async fn generate_content_consuming<T>(
+        self,
+        contents: T,
+    ) -> Result<GenerateContentResponse, Error>
+    where
+        T: TryIntoContents,
+    {
+        let mut gc = self.client.gc.clone();
+        let request = self.build_request(contents)?;
+        gc.generate_content(request)
             .await
             .map_err(status_into_error)
             .map(|r| r.into_inner())
     }
 
+    /// A convenience method to generate a structured response of type `T`.
+    ///
+    /// This method internally converts the `GenerativeModel` to a `TypedModel<T>`,
+    /// makes the request, and returns the parsed result directly. It clones the model
+    /// configuration for the request.
+    ///
+    /// For repeated calls with the same target type, it may be more efficient to create a
+    /// `TypedModel` instance directly.
     pub async fn typed_generate_content<I, T>(&self, contents: I) -> Result<T, Error>
     where
         I: TryIntoContents + Send,
         T: AsSchema + TryFromCandidates + Send,
     {
-        // FIXME: This and its kind.
-        //
-        // We end-up cloning twice; here and when we prepare request in generate_content call.
-        // we could just build request from here and set the schema
-        self.clone().to_typed().generate_content(contents).await
+        // Cloning occurs just this once with owned_generate_content
+        self.cloned()
+            .to_typed()
+            .generate_content_consuming(contents)
+            .await
     }
 
+    /// A convenience method to generate a structured response with metadata.
+    ///
+    /// Similar to `typed_generate_content`, but returns a `TypedResponse<T>` which includes
+    /// both the parsed data and the raw API response metadata.
     pub async fn generate_typed_content<I, T>(&self, contents: I) -> Result<TypedResponse<T>, Error>
     where
         I: TryIntoContents + Send,
         T: AsSchema + TryFromCandidates + Send,
     {
-        self.clone()
+        self.cloned()
             .to_typed()
-            .generate_typed_content(contents)
+            .generate_typed_content_consuming(contents)
             .await
     }
 
-    /// Generates a streaming response from flexible input
+    /// Generates a streaming response from flexible input.
+    ///
+    /// This method clones the model's configuration for the request, allowing the original
+    /// `GenerativeModel` instance to be reused.
     ///
     /// # Example
     /// ```
@@ -394,21 +484,30 @@ impl<'c> GenerativeModel<'c> {
     /// ```
     ///
     /// # Errors
-    /// Returns [`Error::Service`] for model errors or [`Error::Net`] for transport failures
+    /// Returns [`Error::Service`] for model errors or [`Error::Net`] for transport failures.
     pub async fn stream_generate_content<T>(&self, contents: T) -> Result<ResponseStream, Error>
     where
         T: TryIntoContents,
     {
-        let contents = contents.try_into_contents()?;
-        if contents.is_empty() {
-            return Err(Error::InvalidArgument("Empty content".into()));
-        }
-        let request = self.build_request(contents).await?;
+        self.cloned()
+            .stream_generate_content_consuming(contents)
+            .await
+    }
 
-        self.client
-            .gc
-            .clone()
-            .stream_generate_content(request)
+    /// Generates a streaming response by consuming the model instance.
+    ///
+    /// This is an efficient alternative to `stream_generate_content` if you don't need to
+    /// reuse the model instance, as it avoids cloning the model's configuration.
+    pub async fn stream_generate_content_consuming<T>(
+        self,
+        contents: T,
+    ) -> Result<ResponseStream, Error>
+    where
+        T: TryIntoContents,
+    {
+        let mut gc = self.client.gc.clone();
+        let request = self.build_request(contents)?;
+        gc.stream_generate_content(request)
             .await
             .map_err(status_into_error)
             .map(|s| ResponseStream(s.into_inner()))
@@ -435,24 +534,20 @@ impl<'c> GenerativeModel<'c> {
     /// # Ok(())
     /// # }
     /// ```
-    ///
-    /// # Errors
-    /// Returns [`Error::InvalidArgument`] for empty input
     pub async fn count_tokens<T>(&self, contents: T) -> Result<CountTokensResponse, Error>
     where
         T: TryIntoContents,
     {
-        let contents = contents.try_into_contents()?;
-        if contents.is_empty() {
-            return Err(Error::InvalidArgument("Empty content".into()));
-        }
+        let mut gc = self.client.gc.clone();
 
-        let request = self.build_count_request(contents).await?;
+        // Builds token counting request
+        let request = CountTokensRequest {
+            model: self.model_name.to_string(),
+            contents: vec![],
+            generate_content_request: Some(self.clone().build_request(contents)?),
+        };
 
-        self.client
-            .gc
-            .clone()
-            .count_tokens(request)
+        gc.count_tokens(request)
             .await
             .map_err(status_into_error)
             .map(|r| r.into_inner())
@@ -472,10 +567,12 @@ impl<'c> GenerativeModel<'c> {
         }
     }
 
+    /// Changes the model identifier for this instance in place.
     pub fn change_model(&mut self, to: &str) {
         self.model_name = full_model_name(to).into()
     }
 
+    /// Returns the full identifier of the model, including any `models/` prefix.
     pub fn full_name(&self) -> &str {
         &self.model_name
     }
@@ -489,6 +586,7 @@ impl<'c> GenerativeModel<'c> {
         self
     }
 
+    /// Changes the model identifier, returning the modified instance.
     pub fn to_model(mut self, to: &str) -> Self {
         self.change_model(to);
         self
@@ -532,13 +630,11 @@ impl<'c> GenerativeModel<'c> {
         self
     }
 
-    /// Set response schema with explicit Schema object using types implementing `AsSchema`
+    /// Configures the model to respond with a schema matching the type `T`.
     ///
-    /// Similar to `with_response_schema`.
+    /// This is a convenient way to get structured JSON output.
     ///
     /// # Example
-    ///
-    ///
     /// ```rust
     /// use google_ai_rs::AsSchema;
     ///
@@ -558,7 +654,7 @@ impl<'c> GenerativeModel<'c> {
     /// # let auth = "YOUR-API-KEY";
     /// # let client = Client::new(auth).await?;
     /// let model = client.generative_model("gemini-pro")
-    ///         .as_response_schema::<Vec<PrimaryColor>>();
+    ///     .as_response_schema::<Vec<PrimaryColor>>();
     /// # Ok(())
     /// # }
     /// ```
@@ -752,41 +848,31 @@ impl<'c> GenerativeModel<'c> {
         self.generation_config.get_or_insert_default().top_k = Some(x)
     }
 
-    /// Builds authenticated generation request
     #[inline(always)]
-    async fn build_request(
-        &self,
-        contents: Vec<Content>,
-    ) -> Result<tonic::Request<GenerateContentRequest>, Error> {
-        let request = self._build_request(contents).into_request();
-        Ok(request)
-    }
-
-    fn _build_request(&self, contents: Vec<Content>) -> GenerateContentRequest {
-        GenerateContentRequest {
-            model: self.model_name.to_string(),
+    fn build_request(
+        self,
+        contents: impl TryIntoContents,
+    ) -> Result<GenerateContentRequest, Error> {
+        let contents = contents.try_into_contents()?;
+        Ok(GenerateContentRequest {
+            model: self.model_name.into(),
             contents,
-            system_instruction: self.system_instruction.clone(),
-            tools: self.tools.clone().unwrap_or_default(),
-            tool_config: self.tool_config.clone(),
-            safety_settings: self.safety_settings.clone().unwrap_or_default(),
-            generation_config: self.generation_config.clone(),
-            cached_content: self.cached_content.clone().map(|c| c.to_string()),
-        }
+            system_instruction: self.system_instruction,
+            tools: self.tools.unwrap_or_default(),
+            tool_config: self.tool_config,
+            safety_settings: self.safety_settings.unwrap_or_default(),
+            generation_config: self.generation_config,
+            cached_content: self.cached_content.map(|c| c.into()),
+        })
     }
 
-    /// Builds token counting request
-    async fn build_count_request(
-        &self,
-        contents: Vec<Content>,
-    ) -> Result<tonic::Request<CountTokensRequest>, Error> {
-        let request = CountTokensRequest {
-            model: self.model_name.to_string(),
-            contents: vec![],
-            generate_content_request: Some(self._build_request(contents)),
+    // This is to avoid the performance overhead while cloning
+    // SharedClient - Arc backed. Insignificant but unnecessary.
+    fn cloned<'a>(&'a self) -> GenerativeModel<'a> {
+        GenerativeModel {
+            client: self.client.cloned(),
+            ..Clone::clone(&self)
         }
-        .into_request();
-        Ok(request)
     }
 }
 

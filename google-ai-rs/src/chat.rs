@@ -284,18 +284,6 @@ mod tests {
         proto::{Candidate, Content, Part},
     };
 
-    impl Content {
-        fn model<P>(parts: P) -> Self
-        where
-            P: IntoParts,
-        {
-            Self {
-                role: "model".into(),
-                parts: parts.into_parts(),
-            }
-        }
-    }
-
     #[test]
     fn _merge_candidates() {
         let mut c1 = vec![
