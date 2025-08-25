@@ -868,10 +868,10 @@ impl<'c> GenerativeModel<'c> {
 
     // This is to avoid the performance overhead while cloning
     // SharedClient - Arc backed. Insignificant but unnecessary.
-    fn cloned<'a>(&'a self) -> GenerativeModel<'a> {
+    fn cloned(&self) -> GenerativeModel<'_> {
         GenerativeModel {
             client: self.client.cloned(),
-            ..Clone::clone(&self)
+            ..Clone::clone(self)
         }
     }
 }

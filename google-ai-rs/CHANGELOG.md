@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.1.1 - 2024-02-20
+## 0.1.1
 
 ### Added
 - `TryIntoContents` trait for validated content creation
@@ -16,7 +16,7 @@
 - Incorrect total_tokens calculation to include cached content tokens
 - Added check for existing for existing schema type before defaulting to "application/json"
 
-## 0.1.2 (Unreleased)
+## 0.1.2
 
 This release focuses on **performance, configurability, and an improved developer experience**. The core client has been significantly optimized, and new features have been added to streamline common AI tasks.
 

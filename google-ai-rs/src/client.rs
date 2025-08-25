@@ -448,9 +448,9 @@ pub(crate) enum CClient<'a> {
 }
 
 impl CClient<'_> {
-    pub(crate) fn cloned<'a>(&'a self) -> CClient<'a> {
+    pub(crate) fn cloned(&self) -> CClient<'_> {
         match self {
-            CClient::Shared(shared_client) => CClient::Borrowed(&shared_client),
+            CClient::Shared(shared_client) => CClient::Borrowed(shared_client),
             CClient::Borrowed(client) => CClient::Borrowed(client),
         }
     }

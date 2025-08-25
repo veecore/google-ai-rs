@@ -393,7 +393,7 @@ name = "google-ai-rs"
 version = "0.1.2"
 dependencies = [
  "base64",
- "google-ai-schema-derive",
+ "google-ai-schema-derive 0.1.2 (registry+https://github.com/rust-lang/crates.io-index)",
  "pem",
  "prost",
  "prost-types",
@@ -410,6 +410,17 @@ dependencies = [
 [[package]]
 name = "google-ai-schema-derive"
 version = "0.1.2"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
+]
+
+[[package]]
+name = "google-ai-schema-derive"
+version = "0.1.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3af554a4702d22b145b4eb328fb13c549dfc56469aba01f7aac2631f90593283"
 dependencies = [
  "proc-macro2",
  "quote",
