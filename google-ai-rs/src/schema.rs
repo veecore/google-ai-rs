@@ -60,8 +60,6 @@ impl SchemaFormat {
     }
 }
 
-/// TODO: Add non-panicking runtime checks (like in into_enum).... also implement is_compatible_with
-/// between schematype and format
 impl Schema {
     /// Constructs a new schema for the specified primitive type.
     pub fn new(typ: SchemaType) -> Self {
