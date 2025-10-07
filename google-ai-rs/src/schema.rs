@@ -1137,7 +1137,7 @@ mod serde_support {
             pub(super) _entry: PhantomData<E>,
             pub(super) seq: S,
         }
-        
+
         impl<'de, E, S> MapAccess<'de> for MapAccessSeqAccess<E, S>
         where
             E: UnorderedEntry,
