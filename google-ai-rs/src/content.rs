@@ -512,190 +512,17 @@ mod serde_support {
         where
             I: Iterator<Item = &'a Content>,
         {
-            // Prevent another allocation
-            let parts = contents
-                .flat_map(|content| &content.parts)
-                .filter_map(|part| match &part.data {
-                    Some(Data::Text(text)) => Some(text.as_bytes()),
-                    Some(Data::InlineData(blob)) => Some(&blob.data),
-                    _ => None,
-                });
+            // TODO: from_reader or some from_iter would be better here
+            // for better memory, but the current from_reader is not that
+            // performant.
+            let mut buf = Vec::new();
+            for content in contents {
+                content._try_to_bytes_with(&mut buf, try_to_bytes)?;
+            }
 
-            serde_json::from_reader(IterReader::new(parts)).map_err(|err| {
+            serde_json::from_slice(&buf).map_err(|err| {
                 Error::Service(crate::error::ServiceError::InvalidResponse(err.into()))
             })
-        }
-    }
-
-    // This is a patch to allow iterator in serde_json... I don't know if
-    // there's already a way I'm missing but I'd wish not to do this. After
-    // peeking at their code, serde_json at the root simply needs an iterator
-    // but only exposes io::Read... this perplexes me.
-    pub struct IterReader<'a, I>
-    where
-        I: Iterator<Item = &'a [u8]>,
-    {
-        /// The underlying iterator providing the byte chunks.
-        iter: I,
-        /// The portion of the last chunk from the iterator that has not yet been read.
-        remainder: &'a [u8],
-    }
-
-    impl<'a, I> IterReader<'a, I>
-    where
-        I: Iterator<Item = &'a [u8]>,
-    {
-        pub fn new(iter: I) -> Self {
-            Self {
-                iter,
-                remainder: &[], // Start with no remainder.
-            }
-        }
-    }
-
-    impl<'a, I> std::io::Read for IterReader<'a, I>
-    where
-        I: Iterator<Item = &'a [u8]>,
-    {
-        fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-            let mut bytes_written = 0;
-
-            // Loop to fill the provided buffer as much as possible.
-            loop {
-                // If we have a remainder from a previous chunk, copy from it first.
-                if !self.remainder.is_empty() {
-                    // Determine how many bytes we can copy.
-                    let to_copy = std::cmp::min(self.remainder.len(), buf.len() - bytes_written);
-
-                    // Get the destination slice in the buffer.
-                    let dest = &mut buf[bytes_written..bytes_written + to_copy];
-
-                    // Copy the data.
-                    dest.copy_from_slice(&self.remainder[..to_copy]);
-
-                    // Update our state: advance the remainder slice and the bytes_written count.
-                    self.remainder = &self.remainder[to_copy..];
-                    bytes_written += to_copy;
-
-                    // If the buffer is now full, we are done for this `read` call.
-                    if bytes_written == buf.len() {
-                        return Ok(bytes_written);
-                    }
-                }
-
-                // If we've reached this point, the remainder is empty.
-                // Try to get a new chunk from the iterator.
-                if let Some(next_chunk) = self.iter.next() {
-                    self.remainder = next_chunk;
-                    // The loop will continue, and the next iteration will process this new chunk.
-                } else {
-                    // The iterator is exhausted. We can't read any more data.
-                    // Return the total number of bytes we managed to write to the buffer.
-                    return Ok(bytes_written);
-                }
-            }
-        }
-    }
-
-    #[cfg(test)]
-    mod tests {
-        use super::*;
-        use std::io::{self, Read};
-
-        /// A high-level integration test using `read_to_string` to ensure the reader works
-        /// with standard library consumers.
-        #[test]
-        fn read_to_string_test() {
-            let chunks = vec![
-                "Hello, ".as_bytes(),
-                "Rustaceans!".as_bytes(),
-                " Welcome to 2025.".as_bytes(),
-            ];
-            let mut reader = IterReader::new(chunks.into_iter());
-            let mut output = String::new();
-
-            let result = reader.read_to_string(&mut output);
-
-            assert!(result.is_ok());
-            assert_eq!(output, "Hello, Rustaceans! Welcome to 2025.");
-        }
-
-        /// Tests the core logic: reading a large chunk into a smaller buffer,
-        /// which forces the reader to use its `remainder` state.
-        #[test]
-        fn read_into_small_buffer_tests_remainder() {
-            let chunks = vec!["01".as_bytes(), "23456789".as_bytes()];
-            let mut reader = IterReader::new(chunks.into_iter());
-            let mut buf = [0u8; 4];
-
-            // First read, fills the buffer
-            let bytes_read = reader.read(&mut buf).unwrap();
-            assert_eq!(bytes_read, 4);
-            assert_eq!(&buf, b"0123");
-
-            // Second read, fills the buffer again from the remainder
-            let bytes_read = reader.read(&mut buf).unwrap();
-            assert_eq!(bytes_read, 4);
-            assert_eq!(&buf, b"4567");
-
-            // Third read, reads the last remaining bytes
-            let bytes_read = reader.read(&mut buf).unwrap();
-            assert_eq!(bytes_read, 2);
-            assert_eq!(&buf[..2], b"89");
-
-            // Fourth read, iterator is exhausted
-            let bytes_read = reader.read(&mut buf).unwrap();
-            assert_eq!(bytes_read, 0);
-        }
-
-        /// Tests reading multiple smaller chunks into one large buffer in a single call.
-        #[test]
-        fn read_multiple_chunks_into_large_buffer() {
-            let chunks = vec!["abc".as_bytes(), "def".as_bytes(), "ghi".as_bytes()];
-            let mut reader = IterReader::new(chunks.into_iter());
-            let mut buf = [0u8; 10];
-
-            // First read should consume all chunks
-            let bytes_read = reader.read(&mut buf).unwrap();
-            assert_eq!(bytes_read, 9);
-            assert_eq!(&buf[..9], b"abcdefghi");
-
-            // Subsequent read should return 0
-            let bytes_read = reader.read(&mut buf).unwrap();
-            assert_eq!(bytes_read, 0);
-        }
-
-        /// Ensures the reader correctly handles an iterator that is empty from the start.
-        #[test]
-        fn read_from_empty_iterator() {
-            let chunks: Vec<&[u8]> = vec![];
-            let mut reader = IterReader::new(chunks.into_iter());
-            let mut buf = [0u8; 100];
-
-            let bytes_read = reader.read(&mut buf).unwrap();
-            assert_eq!(bytes_read, 0);
-        }
-
-        /// Tests the case where the buffer size perfectly aligns with the chunk sizes.
-        #[test]
-        fn read_when_buffer_and_chunks_align_perfectly() {
-            let chunks = vec!["123".as_bytes(), "456".as_bytes()];
-            let mut reader = IterReader::new(chunks.into_iter());
-            let mut buf = [0u8; 3];
-
-            // Read first chunk
-            let bytes_read = reader.read(&mut buf).unwrap();
-            assert_eq!(bytes_read, 3);
-            assert_eq!(&buf, b"123");
-
-            // Read second chunk
-            let bytes_read = reader.read(&mut buf).unwrap();
-            assert_eq!(bytes_read, 3);
-            assert_eq!(&buf, b"456");
-
-            // No more data
-            let bytes_read = reader.read(&mut buf).unwrap();
-            assert_eq!(bytes_read, 0);
         }
     }
 }
@@ -830,6 +657,7 @@ impl Content {
         }
     }
 
+    #[inline]
     fn try_to_bytes_with(
         &self,
         m: impl Fn(Option<&Data>) -> Result<&[u8], Error>,
@@ -839,6 +667,7 @@ impl Content {
         Ok(output)
     }
 
+    #[inline]
     fn _try_to_bytes_with(
         &self,
         buf: &mut Vec<u8>,

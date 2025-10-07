@@ -800,8 +800,6 @@ impl<K, V> MapTrait for HashMap<K, V> {
     type Value = V;
 }
 
-// TODO: Other maptrait items for HashMap
-
 /// Internal representation of a map entry for schema generation
 ///
 /// Automatically renames fields based on the MapTrait implementation.
@@ -1139,11 +1137,7 @@ mod serde_support {
             pub(super) _entry: PhantomData<E>,
             pub(super) seq: S,
         }
-
-        // TODO: Bring back LuckyEntry which tries to get the key or value
-        // and errors if it's not the one it meets. Barrier: MapAccess is
-        // not dyn compatible.
-
+        
         impl<'de, E, S> MapAccess<'de> for MapAccessSeqAccess<E, S>
         where
             E: UnorderedEntry,

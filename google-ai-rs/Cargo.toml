@@ -1,6 +1,6 @@
 [package]
 name = "google-ai-rs"
-version = "0.1.3"
+version = "0.1.4"
 edition = "2021"
 license = "MIT"
 authors = ["Victor <victorayo206@example.com>"]

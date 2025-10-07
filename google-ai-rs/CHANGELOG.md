@@ -1,20 +1,48 @@
 # Changelog
 
-## 0.1.1
-
-### Added
-- `TryIntoContents` trait for validated content creation
-- `Tuple` and `Map` type for schema-compliant key/value storage
-- `TypedModel` a type-safe model
-- Serde integration examples in docs
+## 0.1.4
 
 ### Changed
-- Improved error messages for schema validation
-- GenerativeModel::with_system_instruction and GenerativeModel::with_cloned_instruction take IntoContent instead of &str
+
+* The last version, in desperate search for performance, blindly used serde_json::from_reader to reduce allocations but ended up being slower. The former implementation is brought back until a better solution is found.
+
+## 0.1.3
+
+### Added
+
+* **Consuming methods for performance:** Introduced methods like `generate_content_consuming` that take ownership of the model instance. These are optimized for one-shot requests, avoiding unnecessary cloning when the model won’t be reused.
+* **`TypedModel` improvements:**
+
+  * Now implements `Clone`, making it easier to pass around.
+  * Updated examples and inline docs to illustrate best practices.
+* **Documentation enhancements:** Expanded explanations of new functionality and clarified usage patterns.
+* **Internal improvements:** Refactored request-building logic and other internals for clearer, faster code.
+
+### Changed
+
+* **Documentation clarity:** Revised existing docs for better consistency and improved explanations of core concepts like `Content` roles.
+* **`IntoParts` refactor:**
+
+  * Added `into_parts_in_place(self, &mut Vec<Part>)` (default calls `into_parts`).
+  * Added `size_hint(&self) -> (usize, Option<usize>)` (default `(1, None)`).
+  * Core impls (`&str`, `String`, `Part`, `Blob`, `FileData`, `FunctionCall`, `Vec<T>`, `[T; N]`, `Cow<'_, T>`, tuples up to 16) now preallocate correctly and avoid redundant pushes.
+* **`serde` integration:**
+
+  * JSON deserialization via `TryFromContents` no longer requires an intermediate buffer.
+  * Added internal `IterReader` to expose iterators of byte slices as `std::io::Read`, streaming parts directly into `serde_json::from_reader`.
+  * Reduces allocations while keeping identical error behavior.
 
 ### Fixed
-- Incorrect total_tokens calculation to include cached content tokens
-- Added check for existing for existing schema type before defaulting to "application/json"
+
+* **Removed redundant validation:** Dropped a client-side check for empty content before API calls. Validation is now fully delegated to the service endpoint.
+
+### Performance
+
+* Tuple/iterable impls now allocate exactly once with correct capacity.
+* Single-value impls avoid unnecessary `Vec` allocations.
+* JSON decoding is fully streaming and zero-copy, lowering overhead for large payloads.
+
+---
 
 ## 0.1.2
 
@@ -41,3 +69,21 @@ This release focuses on **performance, configurability, and an improved develope
 * Improved documentation for key traits and structs, including `AsSchema`, to better reflect new features and provide clearer examples.
 * Refined the `README.md` to highlight the crate's core values: **type-safety, performance, and ergonomics**.
 * Standardized builder method names and patterns across the crate for greater consistency.
+
+-------
+
+## 0.1.1
+
+### Added
+- `TryIntoContents` trait for validated content creation
+- `Tuple` and `Map` type for schema-compliant key/value storage
+- `TypedModel` a type-safe model
+- Serde integration examples in docs
+
+### Changed
+- Improved error messages for schema validation
+- GenerativeModel::with_system_instruction and GenerativeModel::with_cloned_instruction take IntoContent instead of &str
+
+### Fixed
+- Incorrect total_tokens calculation to include cached content tokens
+- Added check for existing for existing schema type before defaulting to "application/json"
